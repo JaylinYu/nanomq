@@ -8,15 +8,15 @@
 //
 
 #include "include/apps.h"
-#include "broker.h"
+#include "include/broker.h"
 #include "mq.h"
 
 #include <stdlib.h>
 
 #if defined(MQ)
-NANOMQ_APP(mq, mqcreate_debug, mqsend_debug, mqreceive_debug);
+NANOMQ_APP(mq, mqcreate_debug, mqsend_debug, mqreceive_debug, NULL);
 #endif
-NANOMQ_APP(broker, broker_dflt, broker_start, NULL);
+NANOMQ_APP(broker, broker_dflt, broker_start, broker_stop, broker_restart);
 
 #if defined(NANO_DEBUG)
 
@@ -28,7 +28,7 @@ const struct nanomq_app *edge_apps[] = {
 #endif
 	&nanomq_app_broker,
 #if defined(NANO_DEBUG)
-	//&
+//&
 #endif
 	NULL,
 };

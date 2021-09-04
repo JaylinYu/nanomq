@@ -6,54 +6,60 @@
 // file was obtained (LICENSE.txt).  A copy of the license may also be
 // found online at https://opensource.org/licenses/MIT.
 //
-#include <nng.h>
 #include <nanolib.h>
-#include <protocol/mqtt/mqtt_parser.h>
+#include <nng.h>
 #include <protocol/mqtt/mqtt.h>
-#include <include/pub_handler.h>
+#include <protocol/mqtt/mqtt_parser.h>
+
 #include "include/nanomq.h"
+#include "include/pub_handler.h"
 #include "include/sub_handler.h"
 
 #define SUPPORT_MQTT5_0 1
 
-void init_sub_property(packet_subscribe * sub_pkt)
+static void cli_ctx_merge(client_ctx * ctx, client_ctx * ctx_new);
+
+void
+init_sub_property(packet_subscribe *sub_pkt)
 {
-	sub_pkt->sub_id.varint = 0;
+	sub_pkt->sub_id.varint                 = 0;
 	sub_pkt->user_property.strpair.len_key = 0;
 	sub_pkt->user_property.strpair.len_val = 0;
 }
 
-uint8_t decode_sub_message(emq_work * work)
+uint8_t
+decode_sub_message(nano_work *work)
 {
-	uint8_t    *variable_ptr;
-	uint8_t    *payload_ptr;
-	int        vpos = 0; // pos in variable
-	int        bpos = 0; // pos in payload
+	uint8_t *variable_ptr;
+	uint8_t *payload_ptr;
+	int      vpos = 0; // pos in variable
+	int      bpos = 0; // pos in payload
 
-	int        len_of_varint = 0, len_of_property = 0, len_of_properties = 0;
-	uint32_t   len_of_str, len_of_topic;
-	nng_msg    *msg = work->msg;
-	size_t     remaining_len = nng_msg_remaining_len(msg);
+	int      len_of_varint = 0, len_of_property = 0, len_of_properties = 0;
+	uint32_t len_of_str, len_of_topic;
+	nng_msg *msg           = work->msg;
+	size_t   remaining_len = nng_msg_remaining_len(msg);
 
 	const uint8_t proto_ver = conn_param_get_protover(work->cparam);
-	uint8_t property_id;
+	uint8_t       property_id;
 
-	topic_node * topic_node_t, * _topic_node;
-	topic_with_option * topic_option;
+	topic_node *       topic_node_t, *_topic_node;
+	topic_with_option *topic_option;
 
 	// handle variable header
-	variable_ptr = nng_msg_variable_ptr(msg);
+	variable_ptr = nng_msg_body(msg);
 
-	packet_subscribe * sub_pkt = work->sub_pkt;
+	packet_subscribe *sub_pkt = work->sub_pkt;
 	NNI_GET16(variable_ptr + vpos, sub_pkt->packet_id);
 	vpos += 2;
 
 #if SUPPORT_MQTT5_0
-	// Only Mqtt_v5 include property. 
+	// Only Mqtt_v5 include property.
 	if (PROTOCOL_VERSION_v5 == proto_ver) {
 		init_sub_property(sub_pkt);
 		// length of property in varibale
-		len_of_properties = get_var_integer(variable_ptr + vpos, &len_of_varint);
+		len_of_properties =
+		    get_var_integer(variable_ptr + vpos, &len_of_varint);
 		vpos += len_of_varint;
 		int target_pos = vpos + len_of_properties;
 
@@ -62,38 +68,49 @@ uint8_t decode_sub_message(emq_work * work)
 			while (1) {
 				property_id = variable_ptr[vpos++];
 				switch (property_id) {
-					case SUBSCRIPTION_IDENTIFIER:
-						sub_pkt->sub_id.varint = get_var_integer(variable_ptr + vpos, &len_of_varint);
-						vpos += len_of_varint;
-						break;
-					case USER_PROPERTY:
-						// key
-						NNI_GET16(variable_ptr + vpos, len_of_str);
-						if ((sub_pkt->user_property.strpair.key = nng_alloc(len_of_str)) == 0) {
-							debug_msg("ERROR: nng_alloc");
-							return NNG_ENOMEM;
-						}
-						sub_pkt->user_property.strpair.len_key = len_of_str;
-						vpos += (len_of_str + 2);
-						len_of_str = 0;
+				case SUBSCRIPTION_IDENTIFIER:
+					sub_pkt->sub_id.varint =
+					    get_var_integer(
+					        variable_ptr + vpos,
+					        &len_of_varint);
+					vpos += len_of_varint;
+					break;
+				case USER_PROPERTY:
+					// key
+					NNI_GET16(
+					    variable_ptr + vpos, len_of_str);
+					if ((sub_pkt->user_property.strpair
+					            .key = nng_alloc(
+					         len_of_str)) == 0) {
+						debug_msg("ERROR: nng_alloc");
+						return NNG_ENOMEM;
+					}
+					sub_pkt->user_property.strpair
+					    .len_key = len_of_str;
+					vpos += (len_of_str + 2);
+					len_of_str = 0;
 
-						// value
-						NNI_GET16(variable_ptr + vpos, len_of_str);
-						if ((sub_pkt->user_property.strpair.val = nng_alloc(len_of_str)) == 0) {
-							debug_msg("ERROR: nng_alloc");
-							return NNG_ENOMEM;
-						}
-						sub_pkt->user_property.strpair.len_val = len_of_str;
-						vpos += (len_of_str + 2);
-						len_of_str = 0;
+					// value
+					NNI_GET16(
+					    variable_ptr + vpos, len_of_str);
+					if ((sub_pkt->user_property.strpair
+					            .val = nng_alloc(
+					         len_of_str)) == 0) {
+						debug_msg("ERROR: nng_alloc");
+						return NNG_ENOMEM;
+					}
+					sub_pkt->user_property.strpair
+					    .len_val = len_of_str;
+					vpos += (len_of_str + 2);
+					len_of_str = 0;
 
-						break;
-					default:
-						break;
+					break;
+				default:
+					break;
 				}
 				if (vpos >= target_pos) {
 					break;
-				}else if (vpos > target_pos) {
+				} else if (vpos > target_pos) {
 					debug_msg("ERROR: protocol error");
 					return PROTOCOL_ERROR;
 				}
@@ -102,13 +119,14 @@ uint8_t decode_sub_message(emq_work * work)
 	}
 #endif
 
-	debug_msg("remainLen: [%ld] packetid : [%d]", remaining_len, sub_pkt->packet_id);
+	debug_msg("remainLen: [%ld] packetid : [%d]", remaining_len,
+	    sub_pkt->packet_id);
 	// handle payload
 	payload_ptr = nng_msg_payload_ptr(msg);
 
-	debug_msg("V:[%x %x %x %x] P:[%x %x %x %x].",
-		variable_ptr[0], variable_ptr[1], variable_ptr[2], variable_ptr[3],
-		payload_ptr[0], payload_ptr[1], payload_ptr[2], payload_ptr[3]);
+	debug_msg("V:[%x %x %x %x] P:[%x %x %x %x].", variable_ptr[0],
+	    variable_ptr[1], variable_ptr[2], variable_ptr[3], payload_ptr[0],
+	    payload_ptr[1], payload_ptr[2], payload_ptr[3]);
 
 	if ((topic_node_t = nng_alloc(sizeof(topic_node))) == NULL) {
 		debug_msg("ERROR: nng_alloc");
@@ -118,24 +136,27 @@ uint8_t decode_sub_message(emq_work * work)
 	sub_pkt->node      = topic_node_t;
 
 	while (1) {
-		if ((topic_option = nng_alloc(sizeof(topic_with_option))) == NULL) {
+		if ((topic_option = nng_alloc(sizeof(topic_with_option))) ==
+		    NULL) {
 			debug_msg("ERROR: nng_alloc");
 			return NNG_ENOMEM;
 		}
 		topic_node_t->it = topic_option;
-		_topic_node = topic_node_t;
+		_topic_node      = topic_node_t;
 
 		NNI_GET16(payload_ptr + bpos, len_of_topic);
 		bpos += 2;
 
 		if (len_of_topic != 0) {
 			topic_option->topic_filter.len = len_of_topic;
-			topic_option->topic_filter.body = nng_alloc(len_of_topic+1);
+			topic_option->topic_filter.body =
+			    nng_alloc(len_of_topic + 1);
 			if (topic_option->topic_filter.body == NULL) {
 				debug_msg("ERROR: nng_alloc");
 				return NNG_ENOMEM;
 			}
-			strncpy(topic_option->topic_filter.body, payload_ptr + bpos, len_of_topic);
+			strncpy(topic_option->topic_filter.body,
+			    payload_ptr + bpos, len_of_topic);
 			topic_option->topic_filter.body[len_of_topic] = '\0';
 			bpos += len_of_topic;
 		} else {
@@ -145,19 +166,22 @@ uint8_t decode_sub_message(emq_work * work)
 
 		memcpy(topic_option, payload_ptr + bpos, 1);
 		if (topic_option->retain_handling > 2) {
-			debug_msg("ERROR: error inretain_handling flag setting");
+			debug_msg(
+			    "ERROR: error inretain_handling flag setting");
 			return PROTOCOL_ERROR;
 		}
 		// TODO sub action when retain_handling equal 0 or 1 or 2
 
-		debug_msg("bpos+vpos: [%d] remainLen: [%ld].", bpos+vpos, remaining_len);
+		debug_msg("bpos+vpos: [%d] remainLen: [%ld].", bpos + vpos,
+		    remaining_len);
 		if (++bpos < remaining_len - vpos) {
-			if ((topic_node_t = nng_alloc(sizeof(topic_node))) == NULL) {
+			if ((topic_node_t = nng_alloc(sizeof(topic_node))) ==
+			    NULL) {
 				debug_msg("ERROR: nng_alloc");
 				return NNG_ENOMEM;
 			}
 			topic_node_t->next = NULL;
-			_topic_node->next = topic_node_t;
+			_topic_node->next  = topic_node_t;
 		} else {
 			break;
 		}
@@ -165,19 +189,20 @@ uint8_t decode_sub_message(emq_work * work)
 	return SUCCESS;
 }
 
-uint8_t encode_suback_message(nng_msg * msg, emq_work * work)
+uint8_t
+encode_suback_message(nng_msg *msg, nano_work *work)
 {
 	nng_msg_clear(msg);
 
-	uint8_t  packet_id[2];
-	uint8_t  varint[4];
-	uint8_t  reason_code, cmd;
-	uint32_t remaining_len, len_of_properties;
-	int      len_of_varint, rv;
-	topic_node * node;
+	uint8_t     packet_id[2];
+	uint8_t     varint[4];
+	uint8_t     reason_code, cmd;
+	uint32_t    remaining_len, len_of_properties;
+	int         len_of_varint, rv;
+	topic_node *node;
 
-	packet_subscribe *sub_pkt = work->sub_pkt;
-	const uint8_t    proto_ver = conn_param_get_protover(work->cparam);
+	packet_subscribe *sub_pkt   = work->sub_pkt;
+	const uint8_t     proto_ver = conn_param_get_protover(work->cparam);
 
 	// handle variable header first
 	NNI_PUT16(packet_id, sub_pkt->packet_id);
@@ -190,8 +215,10 @@ uint8_t encode_suback_message(nng_msg * msg, emq_work * work)
 	if (PROTOCOL_VERSION_v5 == proto_ver) { // add property in variable
 		// 31(0x1f)ReasonCode - utf-8 string
 		// 38(0x26)UserProperty - string pair
-		len_of_varint = put_var_integer(varint, 0); // len_of_properties = 0
-		debug_msg("length of property [%d] [%x %x]", len_of_varint, varint[0], varint[1]);
+		len_of_varint =
+		    put_var_integer(varint, 0); // len_of_properties = 0
+		debug_msg("length of property [%d] [%x %x]", len_of_varint,
+		    varint[0], varint[1]);
 		if ((rv = nng_msg_append(msg, varint, len_of_varint)) != 0) {
 			debug_msg("ERROR: nng_msg_append [%d]", rv);
 			return PROTOCOL_ERROR;
@@ -210,7 +237,8 @@ uint8_t encode_suback_message(nng_msg * msg, emq_work * work)
 				reason_code = node->it->qos;
 			}
 			// MQTT_v3: 0x00-qos0  0x01-qos1  0x02-qos2  0x80-fail
-			if ((rv = nng_msg_append(msg, (uint8_t *) &reason_code, 1)) != 0) {
+			if ((rv = nng_msg_append(
+			         msg, (uint8_t *) &reason_code, 1)) != 0) {
 				debug_msg("ERROR: nng_msg_append [%d]", rv);
 				return PROTOCOL_ERROR;
 			}
@@ -225,7 +253,7 @@ uint8_t encode_suback_message(nng_msg * msg, emq_work * work)
 		return PROTOCOL_ERROR;
 	}
 
-	remaining_len = (uint32_t)nng_msg_len(msg);
+	remaining_len = (uint32_t) nng_msg_len(msg);
 	len_of_varint = put_var_integer(varint, remaining_len);
 	if ((rv = nng_msg_header_append(msg, varint, len_of_varint)) != 0) {
 		debug_msg("ERROR: nng_msg_header_append [%d]", rv);
@@ -233,103 +261,107 @@ uint8_t encode_suback_message(nng_msg * msg, emq_work * work)
 	}
 
 	debug_msg("remain: [%d]"
-		" varint: [%d %d %d %d]"
-		" len: [%d]"
-		" packetid: [%x %x]",
-		remaining_len,
-		varint[0], varint[1], varint[2], varint[3],
-		len_of_varint,
-		packet_id[0], packet_id[1]);
+	          " varint: [%d %d %d %d]"
+	          " len: [%d]"
+	          " packetid: [%x %x]",
+	    remaining_len, varint[0], varint[1], varint[2], varint[3],
+	    len_of_varint, packet_id[0], packet_id[1]);
 
 	return SUCCESS;
 }
 
 // generate ctx for each topic
-uint8_t sub_ctx_handle(emq_work * work, client_ctx * cli_ctx)
+uint8_t
+sub_ctx_handle(nano_work *work)
 {
-	topic_node * topic_node_t = work->sub_pkt->node;
-	char * topic_str;
-	struct client * client;
-	struct topic_queue * tq;
+	topic_node *        topic_node_t = work->sub_pkt->node;
+	char *              topic_str    = NULL;
+	char *              client_id    = NULL;
+	int                 topic_len    = 0;
+	struct topic_queue *tq           = NULL;
+	work->msg_ret                    = NULL;
+	int                 topic_exist  = 0;
 
-	// insert ctx_sub into treeDB
+	client_ctx *old_ctx = NULL;
+	client_ctx *cli_ctx = nng_alloc(sizeof(client_ctx));
+	cli_ctx->sub_pkt    = work->sub_pkt;
+	cli_ctx->cparam     = work->cparam;
+	cli_ctx->pid        = work->pid;
+	cli_ctx->proto_ver  = conn_param_get_protover(work->cparam);
+
+	client_id = (char *)conn_param_get_clientid(
+	                 (conn_param *)nng_msg_get_conn_param(work->msg));
+
+	// get ctx from tree TODO optimization here
+	tq = get_topic(cli_ctx->pid.id);
+	if (tq) {
+		old_ctx = search_and_delete(work->db, tq->topic, cli_ctx->pid.id);
+	}
+	if (old_ctx) {
+		search_and_insert(work->db, tq->topic, client_id, old_ctx, cli_ctx->pid.id);
+	}
+	if (!tq || !old_ctx) { /* the real ctx stored in tree */
+		old_ctx = nng_alloc(sizeof(client_ctx));
+		old_ctx->sub_pkt = nng_alloc(sizeof(packet_subscribe));
+		old_ctx->sub_pkt->node = NULL;
+		old_ctx->cparam = NULL;
+	}
+	/* Swap pid, capram, proto_ver in ctxs */
+	old_ctx->pid.id = cli_ctx->pid.id;
+	old_ctx->proto_ver = cli_ctx->proto_ver;
+	conn_param * cp = old_ctx->cparam;
+	old_ctx->cparam = cli_ctx->cparam;
+	cli_ctx->cparam = cp;
+
 	while (topic_node_t) {
-		struct topic_and_node tan;
-		if ((client = nng_alloc(sizeof(struct client))) == NULL) {
-			debug_msg("ERROR: nng_alloc");
-			return NNG_ENOMEM;
+		topic_len = topic_node_t->it->topic_filter.len;
+		topic_str = topic_node_t->it->topic_filter.body;
+		debug_msg("topicLen: [%d] body: [%s]", topic_len, topic_str);
+
+		/* remove duplicate items */
+		topic_exist = 0;
+		tq          = get_topic(work->pid.id);
+		while (tq) {
+			if (!strcmp(topic_str, tq->topic)) {
+				topic_exist = 1;
+				break;
+			}
+			tq = tq->next;
 		}
-
-		//setting client
-		client->id = (char *)conn_param_get_clentid((conn_param *)nng_msg_get_conn_param(work->msg));
-		client->ctxt = cli_ctx;
-		client->next = NULL;
-
-		// setting client_ctx
-		cli_ctx->pid.id = work->pid.id;
-		cli_ctx->cparam = work->cparam;
-		cli_ctx->sub_pkt = work->sub_pkt;
-
-		if ((topic_str = nng_alloc(topic_node_t->it->topic_filter.len + 1)) == NULL) {
-			debug_msg("ERROR: nng_alloc");
-			return NNG_ENOMEM;
+		if (!topic_exist) {
+			search_and_insert(work->db, topic_str, client_id, old_ctx, work->pid.id);
+			add_topic(work->pid.id, topic_str);
 		}
-		strncpy(topic_str, topic_node_t->it->topic_filter.body, topic_node_t->it->topic_filter.len);
-		topic_str[topic_node_t->it->topic_filter.len] = '\0';
-		debug_msg("topicLen: [%d] body: [%s]", topic_node_t->it->topic_filter.len, (char *)topic_str);
+#ifdef DEBUG
+		// check
+		debug_msg("--CHECK--cliid: [%s] pipeid: [%d]",
+		    client_id, work->pid.id);
+#endif
 
-		char ** topics = topic_parse(topic_str);
-		search_node(work->db, topics, &tan);
-
-		if (tan.topic) { // not contain the node
-			add_node(&tan, client);
-			add_topic(client->id, topic_str);
-			add_pipe_id(work->pid.id, client->id);
-			// check
-			tq = get_topic(client->id);
-			debug_msg("-----CHECKHASHTABLE----clientid: [%s]---topic: [%s]---pipeid: [%d]",
-				client->id, tq->topic, work->pid.id);
-		} else {
-			// not contain clientid
-			if (tan.node->sub_client==NULL || check_client(tan.node, client->id)) {
-				add_topic(client->id, topic_str);
-				add_pipe_id(work->pid.id, client->id);
-				add_client(&tan, client);
-			} else { // clientid already in hash
-				work->sub_pkt->node->it->reason_code = 0x80;
+		retain_msg **r = search_retain(work->db_ret, topic_str);
+		if (r) {
+			for (int i = 0; i < cvector_size(r); i++) {
+				if (!r[i]) {
+					continue;
+				}
+				debug_msg("found retain [%p], "
+				    "message: [%p][%p] sz [%d]\n",
+				    r[i], r[i]->message,
+				    nng_msg_payload_ptr(r[i]->message),
+				    cvector_size(r));
+				cvector_push_back(work->msg_ret, (nng_msg *)r[i]->message);
 			}
 		}
-//		/* check
-		search_node(work->db, topics, &tan);
-		struct client * cli = tan.node->sub_client;
-		int count = 0;
-		while(cli){
-//			debug_msg("client: %s", cli->id);
-			cli = cli->next;
-			count++;
-		}
-		debug_msg("client count [%d]", count);
-//		*/
+		cvector_free(r);
 
-		struct retain_msg_node *msg_node = search_retain_msg(work->db->root, topics);
-
-		if (msg_node != NULL) {
-			for (struct retain_msg_node *i = msg_node->down; i != NULL && i->ret_msg != NULL; i = i->down) {
-				debug_msg("found retain [%p], message: [%p]", i->ret_msg, i->ret_msg->message);
-				work->pub_packet = copy_pub_packet(i->ret_msg->message);
-				work->pub_packet->fixed_header.retain = 1;
-				work->pub_packet->fixed_header.remain_len = work->pub_packet->payload_body.payload_len
-					+ work->pub_packet->variable_header.publish.topic_name.len+2
-					+ (work->pub_packet->fixed_header.qos == 0 ? 0 : 2);
-				put_pipe_msgs(cli_ctx, work, work->pipe_ct, PUBLISH);
-			}
-			free_retain_node(msg_node);
-		}
-
-		free_topic_queue(topics);
-		nng_free(topic_str, topic_node_t->it->topic_filter.len+1);
 		topic_node_t = topic_node_t->next;
 	}
+
+	// clean session handle.
+	// if cli ctx exists in tree, get it and merge(new ctx, stored ctx)
+	debug_msg("clean session handle");
+	cli_ctx_merge(cli_ctx, old_ctx);
+	destroy_sub_ctx(cli_ctx);
 
 	// check treeDB
 	print_db_tree(work->db);
@@ -337,123 +369,219 @@ uint8_t sub_ctx_handle(emq_work * work, client_ctx * cli_ctx)
 	return SUCCESS;
 }
 
-void del_sub_ctx(void * ctxt, char * target_topic)
-{
-	client_ctx * cli_ctx = ctxt;
-	if (!cli_ctx) {
-		debug_msg("ERROR : ctx lost!");
-		return;
-	}
-	if (!cli_ctx->sub_pkt) {
-		debug_msg("ERROR : ctx->sub is nil");
-		return;
-	}
-	const uint8_t      proto_ver = conn_param_get_protover(cli_ctx->cparam);
-	packet_subscribe * sub_pkt = cli_ctx->sub_pkt;
-	if (!(sub_pkt->node)) {
-		debug_msg("ERROR : not find topic");
+static void
+cli_ctx_merge(client_ctx * ctx_new, client_ctx * ctx) {
+	int is_find = 0;
+	struct topic_node *node, *node_new, *node_prev = NULL;
+	struct topic_node *node_a = NULL;
+	topic_with_option *two = NULL;
+	char              *str = NULL;
+	if (ctx->pid.id != ctx_new->pid.id) {
 		return;
 	}
 
-	topic_node * topic_node_t      = sub_pkt->node;
-	topic_node * before_topic_node = NULL;
+#ifdef DEBUG /* Remove after testing */
+	debug_msg("stored ctx:");
+	node = ctx->sub_pkt->node;
+	while (node) {
+		debug_msg("%s", node->it->topic_filter.body);
+		node = node->next;
+	}
+	debug_msg("new ctx");
+	node_new = ctx_new->sub_pkt->node;
+	while (node_new) {
+		debug_msg("%s", node_new->it->topic_filter.body);
+		node_new = node_new->next;
+	}
+#endif
+
+	node_new = ctx_new->sub_pkt->node;
+	while (node_new) {
+		node = ctx->sub_pkt->node;
+		node_prev = NULL;
+		is_find = 0;
+		while (node) {
+			if (strcmp(node->it->topic_filter.body, node_new->it->topic_filter.body) == 0) {
+				is_find = 1;
+				break;
+			}
+			node_prev = node;
+			node = node->next;
+		}
+		if (is_find) {
+			// update option
+			node->it->no_local          = node_new->it->no_local;
+			node->it->qos               = node_new->it->qos;
+			node->it->retain_as_publish = node_new->it->retain_as_publish;
+			node->it->retain_handling   = node_new->it->retain_handling;
+		} else { /* not find */
+			// copy and append TODO optimize topic_node structure
+			node_a = nng_alloc(sizeof(topic_node));
+			two    = nng_alloc(sizeof(topic_with_option));
+			str    = nng_alloc(node_new->it->topic_filter.len+1);
+			memcpy(two, node_new->it, sizeof(topic_with_option));
+			strcpy(str, node_new->it->topic_filter.body);
+			str[node_new->it->topic_filter.len] = '\0';
+			node_a->it = two;
+			two->topic_filter.body = str;
+			node_a->next = NULL;
+			if (!node_prev) {
+				ctx->sub_pkt->node = node_a;
+			} else {
+				node_prev->next = node_a;
+			}
+		}
+		node_new = node_new->next;
+	}
+
+#ifdef DEBUG /* Remove after testing */
+	debug_msg("after change.");
+	debug_msg("stored ctx:");
+	node = ctx->sub_pkt->node;
+	while (node) {
+		debug_msg("%s", node->it->topic_filter.body);
+		node = node->next;
+	}
+	debug_msg("new ctx");
+	node_new = ctx_new->sub_pkt->node;
+	while (node_new) {
+		debug_msg("%s", node_new->it->topic_filter.body);
+		node_new = node_new->next;
+	}
+#endif
+}
+
+void
+del_sub_ctx(void *ctxt, char *target_topic)
+{
+	uint8_t           proto_ver         = 0;
+	client_ctx *      cli_ctx           = ctxt;
+	topic_node *      topic_node_t      = NULL;
+	topic_node *      before_topic_node = NULL;
+	packet_subscribe *sub_pkt           = NULL;
+
+	if (!cli_ctx || !cli_ctx->sub_pkt) {
+		debug_msg("ERROR : ctx or sub_pkt is null!");
+		return;
+	}
+
+	sub_pkt           = cli_ctx->sub_pkt;
+	proto_ver         = cli_ctx->proto_ver;
+	topic_node_t      = sub_pkt->node;
+	before_topic_node = NULL;
+
 	while (topic_node_t) {
-		if (!strncmp(topic_node_t->it->topic_filter.body, target_topic,
-			topic_node_t->it->topic_filter.len)) {
-			debug_msg("FREE in topic_node [%s] in tree", topic_node_t->it->topic_filter.body);
+		if (!strcmp(topic_node_t->it->topic_filter.body, target_topic)) {
+			debug_msg("FREE in topic_node [%s] in tree",
+			    topic_node_t->it->topic_filter.body);
 			if (before_topic_node) {
 				before_topic_node->next = topic_node_t->next;
 			} else {
 				sub_pkt->node = topic_node_t->next;
 			}
 
-			nng_free(topic_node_t->it->topic_filter.body, topic_node_t->it->topic_filter.len);
+			nng_free(topic_node_t->it->topic_filter.body,
+			    topic_node_t->it->topic_filter.len);
 			nng_free(topic_node_t->it, sizeof(topic_with_option));
 			nng_free(topic_node_t, sizeof(topic_node));
 			break;
 		}
-		/* check
-		else{
-			debug_msg("a/topic b/topic [%s] [%s]", topic_node_t->it->topic_filter.body, target_topic);
-		}
-		*/
 		before_topic_node = topic_node_t;
-		topic_node_t = topic_node_t->next;
+		topic_node_t      = topic_node_t->next;
 	}
 
+	debug_msg("info: sub pkt node handling [%p]\n", sub_pkt->node);
 	if (sub_pkt->node == NULL) {
 #if SUPPORT_MQTT5_0
 		if (PROTOCOL_VERSION_v5 == proto_ver) {
 			if (sub_pkt->user_property.strpair.len_key) {
-				nng_free(sub_pkt->user_property.strpair.key, sub_pkt->user_property.strpair.len_key);
-				nng_free(sub_pkt->user_property.strpair.val, sub_pkt->user_property.strpair.len_val);
+				nng_free(sub_pkt->user_property.strpair.key,
+				    sub_pkt->user_property.strpair.len_key);
+				nng_free(sub_pkt->user_property.strpair.val,
+				    sub_pkt->user_property.strpair.len_val);
 			}
 		}
 #endif
 		nng_free(sub_pkt, sizeof(packet_subscribe));
-		// TODO free conn_param
-		// debug_msg("Free--clientctx: [%p]----pipeid: [%d]", cli_ctx, cli_ctx->pid.id);
 		nng_free(cli_ctx, sizeof(client_ctx));
 		cli_ctx = NULL;
 	}
 }
 
-void destroy_sub_ctx(void * ctxt)
+void
+destroy_sub_pkt(packet_subscribe * sub_pkt, uint8_t proto_ver)
 {
-	client_ctx * cli_ctx = ctxt;
-	if (!cli_ctx) {
-		debug_msg("ERROR : ctx lost!");
+	topic_node * topic_node_t, *next_topic_node;
+	if (!sub_pkt) {
 		return;
 	}
-	if (!cli_ctx->sub_pkt) {
-		debug_msg("ERROR : ctx->sub is nil");
-		return;
-	}
-	const uint8_t      proto_ver = conn_param_get_protover(cli_ctx->cparam);
-	packet_subscribe * sub_pkt = cli_ctx->sub_pkt;
-	if (!(sub_pkt->node)) {
-		nng_free(sub_pkt, sizeof(packet_subscribe));
-		nng_free(cli_ctx, sizeof(client_ctx));
-		cli_ctx = NULL;
-		return;
-	}
-
-	topic_node * topic_node_t = sub_pkt->node;
-	topic_node * next_topic_node = NULL;
+	topic_node_t    = sub_pkt->node;
+	next_topic_node = NULL;
 	while (topic_node_t) {
 		next_topic_node = topic_node_t->next;
-		nng_free(topic_node_t->it->topic_filter.body, topic_node_t->it->topic_filter.len);
+		nng_free(topic_node_t->it->topic_filter.body,
+		    topic_node_t->it->topic_filter.len);
 		nng_free(topic_node_t->it, sizeof(topic_with_option));
 		nng_free(topic_node_t, sizeof(topic_node));
 		topic_node_t = next_topic_node;
 	}
 
-	if (sub_pkt->node == NULL) {
+	if (sub_pkt) {
 #if SUPPORT_MQTT5_0
 		if (PROTOCOL_VERSION_v5 == proto_ver) {
-			nng_free(sub_pkt->user_property.strpair.key, sub_pkt->user_property.strpair.len_key);
-			nng_free(sub_pkt->user_property.strpair.val, sub_pkt->user_property.strpair.len_val);
+			nng_free(sub_pkt->user_property.strpair.key,
+			    sub_pkt->user_property.strpair.len_key);
+			nng_free(sub_pkt->user_property.strpair.val,
+			    sub_pkt->user_property.strpair.len_val);
 		}
 #endif
-
+	}
+	if (sub_pkt) {
 		nng_free(sub_pkt, sizeof(packet_subscribe));
-		// TODO free conn_param
-		nng_free(cli_ctx, sizeof(client_ctx));
-		cli_ctx = NULL;
+		sub_pkt = NULL;
 	}
 }
 
-void del_sub_pipe_id(uint32_t pipe_id)
+void
+destroy_sub_pkt_without_ct(packet_subscribe * sub_pkt, uint8_t proto_ver)
 {
-	if (check_pipe_id(pipe_id)) {
-		del_pipe_id(pipe_id);
+	topic_node * topic_node_t, *next_topic_node;
+	if (!sub_pkt) {
+		return;
+	}
+	topic_node_t    = sub_pkt->node;
+	next_topic_node = NULL;
+	while (topic_node_t) {
+		next_topic_node = topic_node_t->next;
+		nng_free(topic_node_t, sizeof(topic_node));
+		topic_node_t = next_topic_node;
+	}
+
+	if (sub_pkt) {
+#if SUPPORT_MQTT5_0
+		if (PROTOCOL_VERSION_v5 == proto_ver) {
+			nng_free(sub_pkt->user_property.strpair.key,
+			    sub_pkt->user_property.strpair.len_key);
+			nng_free(sub_pkt->user_property.strpair.val,
+			    sub_pkt->user_property.strpair.len_val);
+		}
+#endif
+	}
+	if (sub_pkt) {
+		nng_free(sub_pkt, sizeof(packet_subscribe));
+		sub_pkt = NULL;
 	}
 }
 
-void del_sub_client_id(char * clientid)
+void
+destroy_sub_ctx(void *ctxt)
 {
-	if (check_id(clientid)) {
-		del_topic_all(clientid);
-	}
-}
+	client_ctx *      cli_ctx         = ctxt;
 
+	if (!cli_ctx) {
+		debug_msg("ERROR : ctx or sub_pkt is null!");
+		return;
+	}
+	nng_free(cli_ctx, sizeof(client_ctx));
+	cli_ctx = NULL;
+}

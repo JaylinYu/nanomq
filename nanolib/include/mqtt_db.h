@@ -1,145 +1,110 @@
 #ifndef MQTT_DB_H
 #define MQTT_DB_H
 
+#include "cvector.h"
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
-typedef enum {UNEQUAL = 0, EQUAL = 1 } state;
+typedef enum { Hash, Vec } type;
+typedef struct db_node db_node;
 
+typedef struct s_client {
+	// char			*id;
+	uint32_t pipe_id;
+	void *   ctxt;
+} s_client;
 
-struct client {
-	char				*id;
-	void			    *ctxt;
-	struct client		*next;
-};
+typedef struct retain_msg {
+	uint8_t qos;
+	bool    exist;
+	char *  m;
+	void *  message;
+} retain_msg;
 
-struct clients {
-	struct client*		sub_client;
-	struct clients*		down;
-	int					len;
-};
+typedef struct db_node {
+	char *      topic;
+	int         plus;
+	int         well;
+	retain_msg *retain;
+	cvector(s_client *) clients;
+	cvector(db_node *) child;
+	pthread_rwlock_t rwlock;
+} db_node;
 
-struct retain_msg_node {
-	struct retain_msg		*ret_msg;
-	struct retain_msg_node	*down;
-};
+typedef struct {
+	db_node *        root;
+	pthread_rwlock_t rwlock;
+} db_tree;
 
-struct retain_msg {
-	uint8_t				qos;
-	bool				exist;
-	void				*message;
-};
+/**
+ * @brief node_cmp - A callback to compare different node
+ * @param x - normally x is db_node
+ * @param y - y is topic we want to compare
+ * @return 0, minus or plus, based on strcmp
+ */
+static inline int
+node_cmp(void *x_, void *y_)
+{
+	char *   y     = (char *) y_;
+	db_node *ele_x = (db_node *) x_;
+	return strcmp(ele_x->topic, y);
+}
 
-struct db_node {
-	char                *topic;
-	bool				hashtag;
-	bool				plus;
-	struct retain_msg   *retain;
-	struct client		*sub_client;
-	struct db_node      *up;
-	struct db_node      *down;
-	struct db_node      *next;
-};
-
-/* 
-** for print_db_tree 
-*/
-
-struct db_nodes {
-	struct db_node		*node;
-	struct db_nodes		*next;
-};
-
-/* if topic equal NULL, topic is finded */ 
-struct topic_and_node {
-	char				**topic;
-	bool				hashtag;
-	struct db_node		*node; 
-	state				t_state;
-};
-
-struct db_tree{
-	struct db_node      *root;
-	// TODO
-};
-
-
+/**
+ * @brief client_cmp - A callback to compare different client
+ * @param x - normally x is s_client
+ * @param y - normally x is s_client
+ * @return 0, minus or plus, based on strcmp
+ */
+static inline int
+client_cmp(void *x_, /*char *y,*/ void *y_)
+{
+	uint32_t *pipe_id = (uint32_t *) y_;
+	s_client *ele_x   = (s_client *) x_;
+	// printf("\ncompare: %d, %d\n", ele_x->pipe_id, *pipe_id);
+	return *pipe_id - ele_x->pipe_id;
+}
 
 /* Create a db_tree */
-void create_db_tree(struct db_tree **db);
+void create_db_tree(db_tree **db);
 
 /* Delete a db_tree */
-void destory_db_tree(struct db_tree *db);
+void destory_db_tree(db_tree *db);
 
-void print_db_tree(struct db_tree *db);
+void print_db_tree(db_tree *db);
 
-bool check_hashtag(char *topic_data);
+void *search_and_insert(
+    db_tree *db, char *topic, char *id, void *ctxt, uint32_t pipe_id);
 
-bool check_plus(char *topic_data); 
+void *search_and_delete(db_tree *db, char *topic, uint32_t pipe_id);
 
-struct db_node *new_db_node(char *topic);
+void **search_client(db_tree *db, char *topic);
 
-void delete_db_node(struct db_node *node);
+void *search_insert_retain(db_tree *db, char *topic, retain_msg *ret_msg);
 
-void set_db_node(struct db_node *node, char **topic_queue);
+void *search_delete_retain(db_tree *db, char *topic);
 
-/* Search node in db_tree*/
-void search_node(struct db_tree *db, char **topic_queue, struct topic_and_node *tan);
+retain_msg **search_retain(db_tree *db, char *topic);
 
-/* Add node to db_tree */
-void add_node(struct topic_and_node *input, struct client *id);
+//
+// void del_all(uint32_t pipe_id, void *db);
+//
+// /* Free node memory */
+// void free_node(struct db_node *node);
+//
+// /* Parsing topic from char* with '/' to char** */
+// char **topic_parse(char *topic);
+//
 
-/* Delete node from db_tree when node does not have clientId */
-void del_node(struct db_node *node);
-
-void del_all(uint32_t pipe_id, void *db);
-
-/* Free node memory */
-void free_node(struct db_node *node);
-
-/* Parsing topic from char* with '/' to char** */
-char **topic_parse(char *topic);
-
-void free_topic_queue(char **topic_queue);
-
-void free_clients(struct clients *for_free);
-
-struct db_node *find_next(struct db_node *node, bool *equal, char
-		**topic_queue);
-
-void set_retain_msg(struct db_node *node, struct retain_msg *retain);
-
-struct retain_msg *get_retain_msg(struct db_node *node);
-
-struct retain_msg_node *search_retain_msg(struct db_node *root,
-		char **topic_queue);
-
-void free_retain_node(struct retain_msg_node *msg_node);
-
-struct clients *search_client(struct db_node *root, char **topic_queue);
-
-bool check_client(struct db_node *node, char *id);
-
-/* Delete client id. */
-struct client *del_client(struct topic_and_node *input, char *id);
-
-struct client *set_client(const char *id, void *ctxt); 
-
-void set_topic_and_node(char **topic_queue, bool hashtag, state t_state, 
-		struct db_node *node, struct topic_and_node *tan);
-
-struct client **iterate_client(struct clients * sub_clients, int *cols); 
-
-struct clients *new_clients(struct client *sub_client);
-
-/* Add client id. */
-void add_client(struct topic_and_node *input, struct client* sub_client);
-
-/* A hash table, clientId or alias as key, topic as value */ 
-char* hash_check_alias(int alias);
+/* A hash table, clientId or alias as key, topic as value */
+char *hash_check_alias(int alias);
 
 void hash_add_alias(int alias, char *topic_data);
 
 void hash_del_alias(int alias);
+
+// char *search_hash_node(char *topic);
 
 #endif

@@ -1,547 +1,322 @@
-#include <string.h>
 #include "include/nanolib.h"
+#include <string.h>
 
+#define NUM_THREADS 8
 
+db_tree *db     = NULL;
+db_tree *db_ret = NULL;
 
-typedef enum{
-	TEST_TOPIC_PARSE = 0,
-	TEST_SEARCH_NODE,
-	TEST_ADD_NODE,
-	TEST_DEL_NODE,
-	TEST_ADD_CLIENT,
-	TEST_DEL_CLIENT,
-	TEST_SEARCH_CLIENT,
-	TEST_RETAIN_MSG,
-	TEST_HASH_ALIAS,
-	TEST_TOPIC_HASH,
-	TEST_PIPE_HASH,
-	TEST_MSG_QUEUE_HASH
-} TEST_STATE;
+///////////for wildcard////////////
+char topic0[] = "zhang/bei/hai";
+char topic1[] = "zhang/#";
+char topic2[] = "#";
+char topic3[] = "zhang/bei/#";
+char topic4[] = "zhang/+/hai";
+char topic5[] = "zhang/bei/+";
+char topic6[] = "zhang/bei/h/ai";
+char topic7[] = "+/+/+";
+char topic8[] = "zhang/+/+";
+char topic9[] = "zhang/bei/hai";
 
+//////////for binary_search/////////
+char topic00[] = "zhang/bei/hai";
+char topic01[] = "zhang/bei/aih";
+char topic02[] = "zhang/bei/iah";
+char topic03[] = "zhang/ee/aa";
+char topic04[] = "zhang/ee/bb";
+char topic05[] = "zhang/ee/cc";
+char topic06[] = "aa/xx/yy";
+char topic07[] = "bb/zz/aa";
+char topic08[] = "cc/dd/aa";
+char topic09[] = "www/xxx/zz";
 
-struct db_tree *db = NULL;
+////////////////////////////////////
+s_client client0 = { 150429, NULL };
+s_client client1 = { 150428, NULL };
+s_client client2 = { 150427, NULL };
+s_client client3 = { 150426, NULL };
+s_client client4 = { 150425, NULL };
+s_client client5 = { 150424, NULL };
+s_client client6 = { 150423, NULL };
+s_client client7 = { 150422, NULL };
+s_client client8 = { 150421, NULL };
+s_client client9 = { 150420, NULL };
 
-const int len = 9;
-char* data[] = {
-		"a/bv/cv",
-		"$zhang/bei/hai",
-		"$zhang/bei/hai/ll",
-		"+/+/+/+",
-		"a/b/c",
-		"a/b/#",
-		"a/+/+",
-		"a/+/c",
-		"+/#",
-		"#"
+retain_msg retain0 = { 1, true, "150429", NULL };
+retain_msg retain1 = { 1, true, "150428", NULL };
+retain_msg retain2 = { 1, true, "150427", NULL };
+retain_msg retain3 = { 1, true, "150426", NULL };
+retain_msg retain4 = { 1, true, "150425", NULL };
+retain_msg retain5 = { 1, true, "150424", NULL };
+retain_msg retain6 = { 1, true, "150423", NULL };
+retain_msg retain7 = { 1, true, "150422", NULL };
+retain_msg retain8 = { 1, true, "150421", NULL };
+retain_msg retain9 = { 1, true, "150420", NULL };
+
+s_client client[] = {
+	{ 150429, NULL },
+	{ 150428, NULL },
+	{ 150427, NULL },
+	{ 150426, NULL },
+	{ 150425, NULL },
+	{ 150424, NULL },
+	{ 150423, NULL },
+	{ 150422, NULL },
+	{ 150421, NULL },
+	{ 150420, NULL },
 };
 
-struct client ID[] = {
-		{"150429", NULL, NULL},
-		{"150410", NULL, NULL},
-		{"150422", NULL, NULL},
-		{"150418", NULL, NULL},
-		{"150666", NULL, NULL},
-		{"130429", NULL, NULL},
-		{"130410", NULL, NULL},
-		{"130422", NULL, NULL},
-		{"130418", NULL, NULL},
-		{"666666", NULL, NULL}
-};
+char id[] = "hahahha";
 
-
-static void Test_topic_parse(void)
+static void
+test_insert()
 {
-	puts(">>>>>>>>>> TEST_TOPIC_PARSE <<<<<<<<");
-
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		char **res = topic_parse(data[index]);
-		char **t = res;
-
-		printf("OUTPUT: ");
-		while (*t) {
-			printf("%s ", *t);
-			t++;
-		}
-		printf("\n");
-		free_topic_queue(res);
-		index++;
-	}
-}
-
-static void Test_search_node(void)
-{
-	puts(">>>>>>>>>> TEST_SEARCH_NODE <<<<<<<<");
-
+	search_and_insert(db, topic0, id, NULL, client0.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic1, id, NULL, client1.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic2, id, NULL, client2.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic3, id, NULL, client3.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic4, id, NULL, client4.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic5, id, NULL, client5.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic6, id, NULL, client6.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic7, id, NULL, client7.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic8, id, NULL, client8.pipe_id);
+	print_db_tree(db);
+	search_and_insert(db, topic9, id, NULL, client9.pipe_id);
 	print_db_tree(db);
 
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
+	// client0.id = "150428";
+	// client1.id = "150427";
+	// client2.id = "150426";
+	// client3.id = "150425";
+	// client4.id = "150424";
+	// client5.id = "150425";
+	// client6.id = "150426";
+	// client7.id = "150427";
+	// client8.id = "150428";
+	// client9.id = "150429";
 
-		char **topic_queue = topic_parse(data[index]);
-
-		search_node(db, topic_queue, &res);
-
-		if (res.topic != NULL) {
-			printf("RES_TOPIC: %s\n", *(res.topic));
-		}
-		if (res.node) {
-			printf("RES_NODE_STATE: %d\n", res.t_state);
-		}
-		if (res.node->sub_client) {
-			printf("RES_NODE_UP_ID: %s\n", res.node->sub_client->id);
-		}
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
+	// ///////////////////////////////////////
+	// search_and_insert(db, topic0, &client0);
+	// print_db_tree(db);
+	// search_and_insert(db, topic1, &client1);
+	// print_db_tree(db);
+	// search_and_insert(db, topic2, &client2);
+	// print_db_tree(db);
+	// search_and_insert(db, topic3, &client3);
+	// print_db_tree(db);
+	// search_and_insert(db, topic4, &client4);
+	// print_db_tree(db);
+	// search_and_insert(db, topic5, &client5);
+	// print_db_tree(db);
+	// search_and_insert(db, topic6, &client6);
+	// print_db_tree(db);
+	// search_and_insert(db, topic7, &client7);
+	// print_db_tree(db);
+	// search_and_insert(db, topic8, &client8);
+	// print_db_tree(db);
+	// search_and_insert(db, topic9, &client9);
+	// //////////////////////////////////////
 }
 
-static void Test_add_node(void)
+static void
+test_delete()
 {
-	puts(">>>>>>>>>>> TEST_ADD_NODE <<<<<<<<<");
-
+	puts("================begin delete===============");
+	search_and_delete(db, topic0, client0.pipe_id);
 	print_db_tree(db);
-
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-
-		char **topic_queue = topic_parse(data[index]);
-
-		search_node(db, topic_queue, &res);
-		add_node(&res, &ID[index]);
-		print_db_tree(db);
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-
-
+	search_and_delete(db, topic1, client1.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic2, client2.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic3, client3.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic4, client4.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic5, client5.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic6, client6.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic7, client7.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic8, client8.pipe_id);
+	print_db_tree(db);
+	search_and_delete(db, topic9, client9.pipe_id);
+	print_db_tree(db);
 }
 
-static void Test_del_node(void)
-{
-	puts(">>>>>>>>>> TEST_DEL_NODE <<<<<<<<");
-
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-
-		char **topic_queue = topic_parse(data[index]);
-
-		search_node(db, topic_queue, &res);
-		log("@@@@@@@@@@@@@@");
-		del_client(&res, ID[index].id);
-		del_node(res.node);
-		print_db_tree(db);
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-
-}
-
-static void Test_add_client()
-{
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-
-		char **topic_queue = topic_parse(data[index]);
-
-		search_node(db, topic_queue, &res);
-		add_client(&res, &ID[index]);
-		print_db_tree(db);
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-
-
-}
-
-static void Test_del_client()
-{
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-
-		char **topic_queue = topic_parse(data[index]);
-
-		search_node(db, topic_queue, &res);
-		del_client(&res, ID[index].id);
-		print_db_tree(db);
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-}
-
-static void Test_search_client()
-{
-	int index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-
-		int cols = 0;
-		char **topic_queue = NULL;
-		struct clients *res_clients = NULL;
-		struct client  **client_queue = NULL;
-
-
-		print_db_tree(db);
-		topic_queue = topic_parse(data[index]);
-		res_clients = search_client(db->root, topic_queue);
-		client_queue = iterate_client(res_clients, &cols);
-
-		while ((*client_queue) != NULL) {
-			puts("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&");
-			printf("%p %p \n", client_queue, *client_queue);
-			printf("RES: client_queue is:%s\n", (*client_queue)->id);
-			client_queue++;
-		}
-
-		zfree(client_queue);
-		client_queue = NULL;
-
-		puts("----------------------------------------------------\nall:");
-		struct clients *for_free = res_clients;
-		while (res_clients) {
-			struct client *sub_client = res_clients->sub_client;
-			while (sub_client) {
-				printf("RES: sub_client is:%s\n", sub_client->id);
-				sub_client = sub_client->next;
-			}
-			res_clients = res_clients->down;
-		}
-
-		while (for_free) {
-			log("@@@@@@@@@@@@for free");
-			struct clients *tt = for_free;
-			for_free = for_free->down;
-			zfree(tt);
-			tt = NULL;
-		}
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-}
-
-static void Test_retain_msg() {
-
-	int index = 0;
-	struct retain_msg_node *msg_node = NULL;
-	struct retain_msg * set_msg = NULL;
-
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-		struct topic_and_node res;
-		memset(&res, 0, sizeof(struct topic_and_node));
-		char **topic_queue = topic_parse(data[index]);
-
-		set_msg = (struct retain_msg*)zmalloc(sizeof(struct retain_msg));
-		memset(set_msg, 1, sizeof(struct retain_msg));
-
-		search_node(db, topic_queue, &res);
-
-		if (res.topic) {
-			add_node(&res, NULL);
-		}
-
-		set_retain_msg(res.node, set_msg);
-		// print_db_tree(db);
-		log(" Test retain_msg");
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-
-	index = 0;
-	while (index < len) {
-		printf("INPUT:%s\n", data[index]);
-
-		print_db_tree(db);
-		char **topic_queue = topic_parse(data[index]);
-		msg_node = search_retain_msg(db->root, topic_queue);
-		struct retain_msg_node *for_free = msg_node;
-		log(" Test return");
-		while (msg_node->down) {
-			log("###################");
-			log("ret_msg: %p", msg_node->down->ret_msg);
-			msg_node = msg_node->down;
-		}
-		free_retain_node(for_free);
-
-		free_topic_queue(topic_queue);
-		index++;
-	}
-
-
-}
-
-// search_node(db, topic_queue, res);
-// add_node(res, &ID1);
-// search_node(db, topic_queue, res);
-// if (check_client(res->node, ID1.id)) {
-// 	add_client(res, &ID1);
-// } else {
-// 	puts("2@@@@@@@@@@@@@@@@@@@@@@@@@@###@@@@@@@");
-// }
-// print_db_tree(db);
-// printf("RES_NODE_ID: %s\n", res->node->sub_client->id);
-// printf("RES_NODE_STATE: %d\n", res->t_state);
-// if (res->topic) {
-// 	printf("RES_TOPIC: %s\n", *(res->topic));
+// static void test_search_client()
+// {
+//         cvector(s_client*) v =  NULL;
+//         v = search_client(db, topic0);
+//
+//         puts("================Return client==============");
+//         if (v) {
+//                 for (int i = 0; i < cvector_size(v); ++i) {
+//                         log("client id: %s", v[i]->id);
+//                 }
+//         }
+//
+//         // if (v) {
+//         // 	for (int i = 0; i < cvector_size(v); ++i) {
+//         //                 for (int j = 0; j < cvector_size(v[i]); j++) {
+//         //                         log("client id: %s", v[i][j]->id);
+//         //                 }
+//         //         }
+//
+//         // }
+//
+//
+//
 // }
 
-
-// topic_queue = topic_parse(data3);
-// search_node(db, topic_queue, res);
-// if (res->topic) {
-// 	add_node(res, &ID5);
-// } else {
-// 	if (check_client(res->node, ID5.id)) {
-// 		 add_client(res, &ID5);
-// 	}
-// }
-// print_db_tree(db);
-
-
-static void Test_hash_alias(void)
+static void *
+test_unique(void *t)
 {
-	puts(">>>>>>>>>>TEST_HASH_TABLE<<<<<<<<");
-	int i = 1;
-	int j = 2;
-	int k = 3;
-	char *topic1 = "topic1";
-	char *topic2 = "topic2";
-	char *topic3 = "topic3";
-	printf("INPUT: %d --> %s\n", i, topic1);
-	printf("INPUT: %d --> %s\n", j, topic2);
-	printf("INPUT: %d --> %s\n", k, topic3);
+	s_client *c = (s_client *) t;
 
-
-	hash_add_alias(i, topic1);
-	hash_add_alias(i, topic2);
-	hash_add_alias(i, topic3);
-	hash_add_alias(j, topic2);
-	hash_add_alias(k, topic3);
-	char* t1 = hash_check_alias(i);
-	char* t2 = hash_check_alias(j);
-	char* t3 = hash_check_alias(k);
-
-	printf("RES: %s\n", t1);
-	printf("RES: %s\n", t2);
-	printf("RES: %s\n", t3);
-	hash_del_alias(i);
-	hash_del_alias(j);
-	hash_del_alias(k);
-	t1 = hash_check_alias(i);
-	t2 = hash_check_alias(j);
-	t3 = hash_check_alias(k);
-	if (t1) {
-		printf("RES: %s\n", t1);
+	for (int i = 0; i < 10; i++) {
+		search_and_insert(db, topic0, id, NULL, c->pipe_id);
+		cvector(void *) v = NULL;
+		v                 = search_client(db, topic0);
+		cvector_free(v);
+		print_db_tree(db);
+		search_and_delete(db, topic0, c->pipe_id);
 	}
-
-	if (t2) {
-		printf("RES: %s\n", t2);
-	}
-
-	if (t3) {
-		printf("RES: %s\n", t3);
-	}
-
+	pthread_exit(NULL);
 }
 
-static void Test_topic_hash(void)
+static void
+test_concurrent()
 {
-	char *id = "150410";
-	char *val = "lee/hom/jian";
-	char *val1 =  "#";
-	char *val2 =  "lee/#";
-	char *val3 = "a/b/c";
-
-	if (check_id(id)) {
-		puts("find");
-	} else {
-		puts("not find");
-	}
-	add_topic(id, val);
-	add_topic(id, val1);
-	add_topic(id, val2);
-	add_topic(id, val3);
-
-	if (check_id(id)) {
-		puts("find");
-	} else {
-		puts("not find");
-	}
-
-	struct topic_queue *res = get_topic(id);
-	while (res) {
-		printf("res: %s\n", res->topic);
-		res = res->next;
-	}
-
-	// del_topic_one(id, val1);
-	res = get_topic(id);
-	while (res) {
-		printf("res: %s\n", res->topic);
-		res = res->next;
-	}
-	// del_topic_all(id);
-
-	if (check_id(id)) {
-		puts("find");
-	} else {
-		puts("not find");
-	}
-}
-
-static void Test_pipe_hash(void)
-{
-	uint32_t pipeid[] = {1, 2, 3, 4};
-	char* clientid[] ={"150429", "150410", "150428", "150418"};
-	for (int i = 0; i < 4; i++) {
-		add_pipe_id(pipeid[i], clientid[i]);
-		printf("get_client_id %s\n", get_client_id(pipeid[i]));
-		// del_pipe_id(pipeid[i]);
-	}
-}
-
-static void Test_msg_queue_hash(void)
-{
-	char* clientid[] = {"111111", "222222", "333333", "000000"};
-	char* msg[]      = {"msg111", "msg222", "msg333", "msg000", "msg112"};
-	for (int i = 0; i < 5; i++) {
-		printf("clientid: %s ,find? %d. \n", clientid[i%4], check_msg_queue_clientid(clientid[i%4]));
-		add_msg_queue(clientid[i%4], msg[i]);
-		struct msg_queue * mq = get_msg_queue(clientid[i%4]);
-		printf("msg: ");
-		while (mq) {
-			printf("%s ", mq->msg);
-			mq = mq->next;
+	pthread_t threads[NUM_THREADS];
+	int       rc;
+	long      t;
+	void *    status;
+	for (t = 0; t < NUM_THREADS; t++) {
+		printf("In main: creating thread %ld\n", t);
+		rc = pthread_create(
+		    &threads[t], NULL, test_unique, (void *) &client[t % 10]);
+		if (rc) {
+			printf(
+			    "ERROR; return code from pthread_create() is %d\n",
+			    rc);
+			exit(-1);
 		}
-		printf("\n\n");
 	}
-	for (int i = 0; i < 4; i++){
-		del_msg_queue_all(clientid[i]);
+
+	for (t = 0; t < NUM_THREADS; t++) {
+		rc = pthread_join(threads[t], &status);
+		if (rc) {
+			printf(
+			    "ERROR; return code from pthread_join() is %d\n",
+			    rc);
+			exit(-1);
+		}
+		printf("Main: completed join with thread %ld having a status "
+		       "of %ld\n",
+		    t, (long) status);
 	}
+
+	printf("Main: program completed. Exiting.\n");
+
+	/* Last thing that main() should do */
+	// pthread_exit(NULL);
 }
 
-
-
-
-void test(TEST_STATE WHAT)
+static void
+test_insert_retain()
 {
-	switch(WHAT) {
-		case TEST_TOPIC_PARSE:
-			Test_topic_parse();
-			break;
-		case TEST_SEARCH_NODE:
-			Test_search_node();
-			break;
-		case TEST_ADD_NODE:
-			Test_add_node();
-			break;
-		case TEST_DEL_NODE:
-			Test_del_node();
-			break;
-		case TEST_ADD_CLIENT:
-			Test_add_client();
-			break;
-		case TEST_DEL_CLIENT:
-			Test_del_client();
-			break;
-		case TEST_SEARCH_CLIENT:
-			Test_search_client();
-			break;
-		case TEST_RETAIN_MSG:
-			Test_retain_msg();
-			break;
-		case TEST_HASH_ALIAS:
-			Test_hash_alias();
-			break;
-		case TEST_TOPIC_HASH:
-			Test_topic_hash();
-			break;
-		case TEST_PIPE_HASH:
-			Test_pipe_hash();
-			break;
-		case TEST_MSG_QUEUE_HASH:
-			Test_msg_queue_hash();
-			break;
-		default:
-			log("No this state");
-			break;
-	}
-
+	search_insert_retain(db_ret, topic00, &retain0);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic01, &retain1);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic02, &retain2);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic03, &retain3);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic04, &retain4);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic05, &retain5);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic06, &retain6);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic07, &retain7);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic08, &retain8);
+	print_db_tree(db_ret);
+	search_insert_retain(db_ret, topic09, &retain9);
+	print_db_tree(db_ret);
 }
 
-void help()
+static void
+test_delete_retain()
 {
-	printf("please input the right num to conduct diff test\n");
-	printf(" test_topic_parse,      0\n");
-	printf(" test_search_node,      1\n");
-	printf(" test_add_node,         2\n");
-	printf(" test_del_node,	        3\n");
-	printf(" test_add_client,       4\n");
-	printf(" test_del_client,       5\n");
-	printf(" test_search_client,    6\n");
-	printf(" test_retain_msg,       7\n");
-	printf(" test_hash_alias,       8\n");
-	printf(" test_topic_hash,       9\n");
-	printf(" test_pipe_hash,       10\n");
-	printf(" test_msg_queue_hash,  11\n");
-	printf(" quit                   q\n");
-	printf(" help                   h\n");
+	search_delete_retain(db_ret, topic00);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic01);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic02);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic03);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic04);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic05);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic06);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic07);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic08);
+	print_db_tree(db_ret);
+	search_delete_retain(db_ret, topic09);
+	print_db_tree(db_ret);
 }
 
-
-
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
 	puts("\n----------------TEST START------------------");
-	char str[5];
-	create_db_tree(&db);
-	help();
 
-	while (1) {
-		printf("input:");
-		scanf("%s", str);
-		if (!strcmp(str, "q")) {
-			break;
-		} else if (!strcmp(str, "h")) {
-			help();
-			continue;
+	// create_db_tree(&db);
+
+	// test_insert();
+	// test_concurrent();
+
+	// for (int i = 0; i < 100; i++) {
+	//         cvector(void*) v =  NULL;
+	//         v = search_client(db, topic0);
+	//         cvector_free(v);
+	// }
+	// test_delete();
+	// // test_search_client();
+	//
+	// print_db_tree(db);
+	// destory_db_tree(db);
+
+	create_db_tree(&db_ret);
+	test_insert_retain();
+	puts("=======================================");
+	retain_msg **r = search_retain(db_ret, topic6);
+	for (int i = 0; i < cvector_size(r); i++) {
+		if (r[i]) {
+			printf("%s\t", r[i]->m);
 		}
-
-		int i = atoi(str);
-		test((TEST_STATE)i);
 	}
+	puts("");
+	puts("=======================================");
+	test_delete_retain();
 
-	// int i = 2;
-	// print_db_tree(db);
-	// del_all(i, db);
-	// print_db_tree(db);
-	destory_db_tree(db);
+	destory_db_tree(db_ret);
 	puts("---------------TEST FINISHED----------------\n");
+
 	return 0;
 }
-
