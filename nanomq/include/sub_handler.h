@@ -2,7 +2,7 @@
 #define MQTT_SUBSCRIBE_HANDLE_H
 
 #include <nng/nng.h>
-#include <packet.h>
+#include <nng/mqtt/packet.h>
 
 #include "broker.h"
 
@@ -14,7 +14,10 @@ void del_sub_ctx(void *, char *);
 // free all mem about sub_ctx
 void destroy_sub_ctx(void *);
 void destroy_sub_pkt(packet_subscribe *, uint8_t);
-void destroy_sub_pkt_without_ct(packet_subscribe *, uint8_t);
 void init_sub_property(packet_subscribe *);
+
+// functions about clean session
+int  cache_session(char *, conn_param *, uint32_t, void *);
+int  restore_session(char *, conn_param *, uint32_t, void *);
 
 #endif

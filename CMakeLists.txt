@@ -11,6 +11,21 @@ SET(CMAKE_CXX_FLAGS "-std=c++11 -O3")
 
 project(nanomq-nng)
 
+option (BUILD_CLIENT "Build nanomq client" ON)
+
+set (NNG_PROTO_MQTT_BROKER  ON)
+set (NNG_TRANSPORT_MQTT_BROKER_TCP ON)
+set (NNG_TRANSPORT_MQTT_BROKER_WS  ON)
+
+if (NNG_ENABLE_TLS) 
+  set (NNG_TRANSPORT_MQTT_BROKER_TLS ON)
+  set (NNG_TRANSPORT_MQTT_BROKER_WSS ON)
+endif()
+
+if (NNG_ENABLE_TLS) 
+  add_definitions(-DNNG_SUPP_TLS)
+endif()
+
 set(CMAKE_MODULE_PATH
   ${CMAKE_MODULE_PATH}
   "${CMAKE_CURRENT_LIST_DIR}/cmake"
@@ -50,6 +65,10 @@ endif (NOWARNING)
 if (MQ)
   add_definitions(-DMQ)
 endif (MQ)
+
+if (BUILD_CLIENT)
+  add_definitions(-DSUPP_CLIENT)
+endif(BUILD_CLIENT)
 
 if (DEBUG)
   message("DEBUG ")

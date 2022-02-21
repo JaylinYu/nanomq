@@ -1,6 +1,8 @@
+#include "nanomq.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +12,6 @@
 #include <unistd.h>
 
 #include "file.h"
-#include "nanomq.h"
 
 #define NG_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -148,37 +149,53 @@ file_delete(const char *fpath)
 }
 
 int
-file_create_dir(const char *fpath)
+file_create_dir(const char *pName)
 {
-	char *last_slash = NULL, *fpath_edit = NULL;
-	int   ret = -1;
 
-	debug_msg("dir = %s", fpath);
+	struct stat sb;
+	char *      slash;
+	char *      path;
+	int         done = 0;
 
-	if (fpath[strlen(fpath) - 1] != '/') {
-		fpath_edit = malloc(strlen(fpath) + 1);
-		if (!fpath_edit)
-			return -1;
-
-		strncpy(fpath_edit, fpath, strlen(fpath) + 1);
-		fpath_edit[strlen(fpath)] = '\0';
-
-		last_slash = strrchr(fpath_edit, '/');
-
-		/* not a single slash in the string ? */
-		if (!last_slash)
-			goto out;
-
-		*last_slash = '\0';
-		fpath       = fpath_edit;
+	/* validate given args */
+	if ((pName == NULL) || (*pName == 0)) {
+		debug_msg("ERR: bad/illegal pName");
+		return (-1);
 	}
 
-	debug_msg("mkdir = %s", fpath);
-	ret = mkdir(fpath, 0777);
-out:
-	free(fpath_edit);
+	/* dup pName for processing and set slash to start of path */
+	path  = strdup(pName);
+	slash = path;
 
-	return ret;
+	/* create dir after dir ... */
+	while (!done) {
+		slash += strspn(slash, "/");
+		slash += strcspn(slash, "/");
+		if (*slash == '\0') {
+			done = 1;
+		}
+		*slash = '\0';
+
+		if (stat(path, &sb)) {
+			if (errno != ENOENT ||
+			    (mkdir(path, 0777) && errno != EEXIST)) {
+				debug_msg(
+				    "ERR: %s (%s)", strerror(errno), path);
+				free(path);
+				return (-1);
+			}
+		} else if (!S_ISDIR(sb.st_mode)) {
+			debug_msg("ERR: %s (%s)", strerror(ENOTDIR), path);
+			free(path);
+			return (-1);
+		}
+		if (done == 0)
+			*slash = '/';
+	}
+
+	debug_msg("DBG: %s successfully created", pName);
+	free(path);
+	return (0);
 }
 
 int
@@ -375,7 +392,7 @@ file_read_bin(const char *fpath, unsigned char **buff, unsigned int offset,
 	if (fd < 0)
 		goto out;
 
-	*buff = malloc(length + 1);
+	*buff = calloc(1, length + 1);
 	if (!*buff)
 		goto close;
 
@@ -483,4 +500,15 @@ out:
 	return 0;
 error:
 	return -1;
+}
+
+int
+file_load_data(const char *filepath, void **data)
+{
+	int64_t size;
+	if ((size = file_size(filepath)) <= 0) {
+		return -1;
+	}
+
+	return file_read_bin(filepath, (uint8_t **) data, 0, size);
 }

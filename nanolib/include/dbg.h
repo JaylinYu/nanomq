@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+// #define NOLOG
 
 static inline char *
 nano_get_time()
@@ -38,19 +39,15 @@ nano_get_time()
 	fprintf(stderr, "[ERROR] (%s:%d: errno: %s) " M "\n", __FILE__, \
 	    __LINE__, clean_errno(), ##__VA_ARGS__)
 
-#define log_warn(M, ...)                                               \
-	fprintf(stderr, "[WARN] (%s:%d: errno: %s) " M "\n", __FILE__, \
-	    __LINE__, clean_errno(), ##__VA_ARGS__)
+#define log_warn(M, ...)                                                \
+	fprintf(stderr, "[WARN] (%s:%d) " M "\n", __FILE__,             \
+	    __LINE__, ##__VA_ARGS__)
 // #define NOLOG
 #ifdef NOLOG
 #define log(M, ...)
 #define log_info(M, ...)
 #else
-#define log_info(M, ...)                                                \
-	fprintf(stderr, "[INFO] (%s:%d) =========>> " M "\n", __FILE__, \
-	    __LINE__, ##__VA_ARGS__)
-
-#define log(M, ...)                                                       \
+#define log_info(M, ...)                                                  \
 	fprintf(stderr, "[INFO] %s (%lu:%s:%d) " M "\n", nano_get_time(), \
 	    pthread_self(), __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif

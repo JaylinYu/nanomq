@@ -19,11 +19,11 @@ decode_unsub_message(nano_work *work)
 {
 	uint8_t *variable_ptr;
 	uint8_t *payload_ptr;
-	int      vpos = 0; // pos in variable
-	int      bpos = 0; // pos in payload
+	uint32_t vpos = 0; // pos in variable
+	uint32_t bpos = 0; // pos in payload
 
-	int len_of_varint = 0, len_of_property = 0, len_of_properties = 0;
-	int len_of_str, len_of_topic;
+	uint32_t len_of_varint = 0, len_of_property = 0, len_of_properties = 0;
+	uint32_t len_of_str, len_of_topic;
 
 	packet_unsubscribe *unsub_pkt     = work->unsub_pkt;
 	nng_msg *           msg           = work->msg;
@@ -209,8 +209,9 @@ unsub_ctx_handle(nano_work *work)
 
 	// delete ctx_unsub in treeDB
 	while (topic_node_t) {
-		client_id = (char *)conn_param_get_clientid(
-			(conn_param *)nng_msg_get_conn_param(work->msg));
+		client_id = (char *) conn_param_get_clientid(
+		    (conn_param *) nng_msg_get_conn_param(work->msg));
+		uint32_t clientid_key = DJBHashn(client_id, strlen(client_id));
 
 		// parse topic string
 		topic_str =
@@ -219,10 +220,12 @@ unsub_ctx_handle(nano_work *work)
 		    topic_node_t->it->topic_filter.len);
 		topic_str[topic_node_t->it->topic_filter.len] = '\0';
 
-		debug_msg("find client [%s] in topic [%s].", client_id, topic_str);
+		debug_msg(
+		    "find client [%s] in topic [%s].", client_id, topic_str);
 
-		cli_ctx = search_and_delete(work->db, topic_str, work->pid.id);
-		del_topic_one(work->pid.id, topic_str);
+		cli_ctx = dbtree_delete_client(
+		    work->db, topic_str, clientid_key, work->pid.id);
+		dbhash_del_topic(work->pid.id, topic_str);
 
 		if (cli_ctx != NULL) { // find the topic
 			topic_node_t->it->reason_code = 0x00;
