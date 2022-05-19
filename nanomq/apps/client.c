@@ -49,7 +49,7 @@ struct client_opts {
 	enum client_type type;
 	bool             verbose;
 	size_t           parallel;
-	atomic_ulong     msg_count;
+	size_t           total_msg_count;
 	size_t           interval;
 	uint8_t          version;
 	char *           url;
@@ -187,10 +187,10 @@ struct work {
 	nng_msg *    msg;
 	nng_ctx      ctx;
 	client_opts *opts;
+	size_t       msg_count;
 };
 
-static atomic_bool exit_signal = false;
-static atomic_long send_count  = 0;
+static void average_msgs(client_opts *opts, struct work **works);
 
 static void
 fatal(const char *msg, ...)
@@ -200,6 +200,7 @@ fatal(const char *msg, ...)
 	vfprintf(stderr, msg, ap);
 	va_end(ap);
 	fprintf(stderr, "\n");
+	exit(1);
 }
 
 static void
@@ -384,7 +385,7 @@ client_parse_opts(int argc, char **argv, client_opts *opts)
 			opts->interval = intarg(arg, 10240000);
 			break;
 		case OPT_MSGCOUNT:
-			opts->msg_count = intarg(arg, 10240000);
+			opts->total_msg_count = intarg(arg, 10240000);
 			break;
 		case OPT_CLIENTS:
 			opts->clients = intarg(arg, 10240000);
@@ -558,18 +559,18 @@ client_parse_opts(int argc, char **argv, client_opts *opts)
 static void
 set_default_conf(client_opts *opts)
 {
-	opts->msg_count     = 0;
-	opts->interval      = 10;
-	opts->qos           = 0;
-	opts->retain        = false;
-	opts->parallel      = 1;
-	opts->version       = 4;
-	opts->keepalive     = 60;
-	opts->clean_session = true;
-	opts->enable_ssl    = false;
-	opts->verbose       = false;
-	opts->topic_count   = 0;
-	opts->clients       = 1;
+	opts->total_msg_count = 1;
+	opts->interval        = 10;
+	opts->qos             = 0;
+	opts->retain          = false;
+	opts->parallel        = 1;
+	opts->version         = 4;
+	opts->keepalive       = 60;
+	opts->clean_session   = true;
+	opts->enable_ssl      = false;
+	opts->verbose         = false;
+	opts->topic_count     = 0;
+	opts->clients         = 1;
 }
 
 // This reads a file into memory.  Care is taken to ensure that
@@ -659,7 +660,7 @@ init_dialer_tls(nng_dialer d, const char *cacert, const char *cert,
 		}
 	}
 
-	rv = nng_dialer_setopt_ptr(d, NNG_OPT_TLS_CONFIG, cfg);
+	rv = nng_dialer_set_ptr(d, NNG_OPT_TLS_CONFIG, cfg);
 
 out:
 	nng_tls_config_free(cfg);
@@ -679,7 +680,6 @@ publish_msg(client_opts *opts)
 	nng_mqtt_msg_set_publish_retain(pubmsg, opts->retain);
 	nng_mqtt_msg_set_publish_payload(pubmsg, opts->msg, opts->msg_len);
 	nng_mqtt_msg_set_publish_topic(pubmsg, opts->topic->val);
-
 	return pubmsg;
 }
 
@@ -694,11 +694,6 @@ client_cb(void *arg)
 	case INIT:
 		switch (work->opts->type) {
 		case PUB:
-			if (work->opts->msg_count > 0) {
-				if (--send_count < 0) {
-					break;
-				}
-			}
 			work->msg = publish_msg(work->opts);
 			nng_msg_dup(&msg, work->msg);
 			nng_aio_set_msg(work->aio, msg);
@@ -750,23 +745,17 @@ client_cb(void *arg)
 			nng_msg_free(work->msg);
 			nng_fatal("nng_send_aio", rv);
 		}
-
-		nng_msg_dup(&msg, work->msg);
-		nng_aio_set_msg(work->aio, msg);
-		msg         = NULL;
-		work->state = SEND_WAIT;
-		nng_sleep_aio(work->opts->interval, work->aio);
+		work->msg_count--;
+		if (work->msg_count > 0) {
+			nng_msg_dup(&msg, work->msg);
+			nng_aio_set_msg(work->aio, msg);
+			msg         = NULL;
+			work->state = SEND_WAIT;
+			nng_sleep_aio(work->opts->interval, work->aio);
+		}
 		break;
 
 	case SEND_WAIT:
-		if (work->opts->msg_count > 0) {
-			if (--send_count < 0) {
-				goto out;
-			}
-		}
-		if (work->opts->interval == 0) {
-			goto out;
-		}
 		work->state = SEND;
 		nng_ctx_send(work->ctx, work->aio);
 		break;
@@ -776,9 +765,6 @@ client_cb(void *arg)
 		break;
 	}
 	return;
-
-out:
-	exit_signal = true;
 }
 
 static struct work *
@@ -844,61 +830,22 @@ struct connect_param {
 };
 
 static void
-connect_cb(void *connect_arg, nng_msg *msg)
+connect_cb(nng_pipe p, nng_pipe_ev ev, void *arg)
 {
-	struct connect_param *param = connect_arg;
-	uint8_t ret_code = nng_mqtt_msg_get_connack_return_code(msg);
-
-	printf("%s(%d): [%ld]\n",
-	    ret_code == 0 ? "connection established" : "connect failed",
-	    ret_code, param->id);
-
-	nng_msg_free(msg);
-	msg = NULL;
-
-	if (ret_code == 0) {
-		if (param->opts->type == SUB && param->opts->topic_count > 0) {
-			// Connected succeed
-			nng_mqtt_msg_alloc(&msg, 0);
-			nng_mqtt_msg_set_packet_type(msg, NNG_MQTT_SUBSCRIBE);
-
-			nng_mqtt_topic_qos *topics_qos =
-			    nng_mqtt_topic_qos_array_create(
-			        param->opts->topic_count);
-
-			size_t i = 0;
-			for (struct topic *tp = param->opts->topic;
-			     tp != NULL && i < param->opts->topic_count;
-			     tp = tp->next, i++) {
-				nng_mqtt_topic_qos_array_set(
-				    topics_qos, i, tp->val, param->opts->qos);
-			}
-
-			nng_mqtt_msg_set_subscribe_topics(
-			    msg, topics_qos, param->opts->topic_count);
-
-			nng_mqtt_topic_qos_array_free(
-			    topics_qos, param->opts->topic_count);
-
-			// Send subscribe message
-			nng_sendmsg(*param->sock, msg, NNG_FLAG_NONBLOCK);
-		}
-	} else {
-		fatal("connect failed: %d", ret_code);
-	}
+	struct connect_param *param = arg;
+	printf("%s: %s connected!\n", __FUNCTION__, param->opts->url);
 }
 
 // Disconnect message callback function
 static void
-disconnect_cb(void *disconn_arg, nng_msg *msg)
+disconnect_cb(nng_pipe p, nng_pipe_ev ev, void *arg)
 {
-	(void) disconn_arg;
 	printf("disconnected\n");
 }
 
 static void
 create_client(nng_socket *sock, struct work **works, size_t id, size_t nwork,
-    nng_mqtt_cb *user_cb)
+    struct connect_param *param)
 {
 	int        rv;
 	nng_dialer dialer;
@@ -926,23 +873,62 @@ create_client(nng_socket *sock, struct work **works, size_t id, size_t nwork,
 	}
 #endif
 
-	struct connect_param *connect_arg = user_cb->connect_arg;
-	connect_arg->sock                 = sock;
-	connect_arg->opts                 = opts;
-	connect_arg->id                   = id;
-
-	user_cb->name            = "user_cb";
-	user_cb->on_connected    = connect_cb;
-	user_cb->on_disconnected = disconnect_cb;
-	user_cb->connect_arg     = connect_arg;
-	user_cb->disconn_arg     = msg;
-
 	nng_dialer_set_ptr(dialer, NNG_OPT_MQTT_CONNMSG, msg);
-	nng_dialer_set_cb(dialer, user_cb);
+
+	param->sock = sock;
+	param->opts = opts;
+	param->id   = id;
+
+	nng_mqtt_set_connect_cb(*sock, connect_cb, param);
+	nng_mqtt_set_disconnect_cb(*sock, disconnect_cb, msg);
+
 	nng_dialer_start(dialer, NNG_FLAG_NONBLOCK);
 
+	if (param->opts->type == SUB && param->opts->topic_count > 0) {
+		nng_msg *msg;
+		nng_mqtt_msg_alloc(&msg, 0);
+		nng_mqtt_msg_set_packet_type(msg, NNG_MQTT_SUBSCRIBE);
+
+		nng_mqtt_topic_qos *topics_qos =
+		    nng_mqtt_topic_qos_array_create(param->opts->topic_count);
+
+		size_t i = 0;
+		for (struct topic *tp = param->opts->topic;
+		     tp != NULL && i < param->opts->topic_count;
+		     tp = tp->next, i++) {
+			nng_mqtt_topic_qos_array_set(
+			    topics_qos, i, tp->val, param->opts->qos);
+		}
+
+		nng_mqtt_msg_set_subscribe_topics(
+		    msg, topics_qos, param->opts->topic_count);
+
+		nng_mqtt_topic_qos_array_free(
+		    topics_qos, param->opts->topic_count);
+
+		// Send subscribe message
+		nng_sendmsg(*param->sock, msg, NNG_FLAG_NONBLOCK);
+	}
+
+	average_msgs(opts, works);
 	for (size_t i = 0; i < opts->parallel; i++) {
 		client_cb(works[i]);
+	}
+}
+
+static void
+average_msgs(client_opts *opts, struct work **works)
+{
+	size_t total_msgs   = opts->total_msg_count;
+	size_t remainder    = total_msgs % opts->parallel;
+	size_t average_msgs = total_msgs / opts->parallel;
+	for (size_t i = 0; i < opts->parallel; i++) {
+		works[i]->msg_count = average_msgs;
+	}
+	if (remainder > 0) {
+		for (size_t i = 0; i < remainder; i++) {
+			works[i]->msg_count += 1;
+		}
 	}
 }
 
@@ -956,13 +942,13 @@ client(int argc, char **argv, enum client_type type)
 
 	client_parse_opts(argc, argv, opts);
 
-	send_count = opts->msg_count;
-	if (opts->interval == 0 && opts->msg_count > 0) {
+	if (opts->interval == 0 && opts->total_msg_count > 0) {
 		opts->interval = 1;
 	}
+	if (opts->total_msg_count < opts->parallel) {
+		opts->parallel = opts->total_msg_count;
+	}
 
-	nng_mqtt_cb **user_cb =
-	    nng_zalloc(sizeof(nng_mqtt_cb *) * opts->clients);
 	struct connect_param **param =
 	    nng_zalloc(sizeof(struct connect_param *) * opts->clients);
 	nng_socket **socket = nng_zalloc(sizeof(nng_socket *) * opts->clients);
@@ -971,29 +957,24 @@ client(int argc, char **argv, enum client_type type)
 	    nng_zalloc(sizeof(struct work **) * opts->clients);
 
 	for (size_t i = 0; i < opts->clients; i++) {
-		param[i]   = nng_zalloc(sizeof(struct connect_param));
-		user_cb[i] = nng_zalloc(sizeof(nng_mqtt_cb));
-		socket[i]  = nng_zalloc(sizeof(nng_socket));
-		user_cb[i]->connect_arg = param[i];
+		param[i]  = nng_zalloc(sizeof(struct connect_param));
+		socket[i] = nng_zalloc(sizeof(nng_socket));
 		works[i] = nng_zalloc(sizeof(struct work **) * opts->parallel);
 		create_client(
-		    socket[i], works[i], i, opts->parallel, user_cb[i]);
+		    socket[i], works[i], i, opts->parallel, param[i]);
 		nng_msleep(opts->interval);
 	}
 
-	while (!exit_signal) {
+	for (;;) {
 		nng_msleep(1000);
 	}
 
 	for (size_t j = 0; j < opts->clients; j++) {
-		nng_free(user_cb[j], sizeof(nng_mqtt_cb));
 		nng_free(param[j], sizeof(struct connect_param));
 		nng_free(socket[j], sizeof(nng_socket));
 
 		for (size_t k = 0; k < opts->parallel; k++) {
 			nng_aio_free(works[j][k]->aio);
-			printf("works[%ld][%ld]->msg: [%p]\n", j, k,
-			    works[j][k]->msg);
 			if (works[j][k]->msg) {
 				nng_msg_free(works[j][k]->msg);
 				works[j][k]->msg = NULL;
@@ -1004,7 +985,6 @@ client(int argc, char **argv, enum client_type type)
 		nng_free(works[j], sizeof(struct work *));
 	}
 
-	nng_free(user_cb, sizeof(nng_mqtt_cb **));
 	nng_free(param, sizeof(struct connect_param **));
 	nng_free(socket, sizeof(nng_socket **));
 	nng_free(works, sizeof(struct work ***));
@@ -1016,18 +996,21 @@ int
 pub_start(int argc, char **argv)
 {
 	client(argc, argv, PUB);
+	return 0;
 }
 
 int
 sub_start(int argc, char **argv)
 {
 	client(argc, argv, SUB);
+	return 0;
 }
 
 int
 conn_start(int argc, char **argv)
 {
 	client(argc, argv, CONN);
+	return 0;
 }
 
 int
@@ -1094,6 +1077,8 @@ client_stop(int argc, char **argv)
 
 		free(opts);
 	}
+
+	return 0;
 }
 
 #endif

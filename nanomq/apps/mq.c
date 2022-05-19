@@ -15,7 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -23,6 +22,7 @@
 #include <unistd.h>
 
 #if defined(MQ)
+#include <sys/resource.h>
 #include <mqueue.h>
 
 #define FILEMODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
@@ -140,6 +140,7 @@ dashboard_data_sync(int argc, char **argv)
 		printf("usage:sync <type:post/cache> ");
 		exit(0);
 	}
+	return 0;
 }
 
 #endif

@@ -1,19 +1,19 @@
 # NanoMQ
 
-[![GitHub Release](https://img.shields.io/github/release/nanomq/nanomq?color=brightgreen&label=Release)](https://github.com/nanomq/nanomq/releases)
-[![Build Status](https://img.shields.io/github/workflow/status/nanomq/nanomq/Build%20packages?label=Build)](https://github.com/nanomq/nanomq/actions)
+[![GitHub Release](https://img.shields.io/github/release/emqx/nanomq?color=brightgreen&label=Release)](https://github.com/emqx/nanomq/releases)
+[![Build Status](https://img.shields.io/github/workflow/status/emqx/nanomq/Build%20packages?label=Build)](https://github.com/emqx/nanomq/actions)
 [![Docker Pulls](https://img.shields.io/docker/pulls/nanomq/nanomq?label=Docker%20Pulls)](https://hub.docker.com/r/nanomq/nanomq)
 [![Discord](https://img.shields.io/discord/931086341838622751?label=Discord&logo=discord)](https://discord.gg/xYGf3fQnES)
 [![Twitter](https://img.shields.io/badge/Follow-EMQ-1DA1F2?logo=twitter)](https://twitter.com/EMQTech)
 [![YouTube](https://img.shields.io/badge/Subscribe-EMQ-FF0000?logo=youtube)](https://www.youtube.com/channel/UC5FjR77ErAxvZENEWzQaO5Q)
-[![Community](https://img.shields.io/badge/Community-NanoMQ-yellow?logo=github)](https://github.com/nanomq/nanomq/discussions)
-[![License](https://img.shields.io/github/license/nanomq/nanomq.svg?logoColor=silver&logo=open-source-initiative&label=&color=blue)](https://github.com/nanomq/nanomq/blob/master/LICENSE.txt)
+[![Community](https://img.shields.io/badge/Community-NanoMQ-yellow?logo=github)](https://github.com/emqx/nanomq/discussions)
+[![License](https://img.shields.io/github/license/emqx/nanomq.svg?logoColor=silver&logo=open-source-initiative&label=&color=blue)](https://github.com/emqx/nanomq/blob/master/LICENSE.txt)
 
 [![The best IoT MQTT open source team looks forward to your joining](https://static.emqx.net/images/github_readme_en_bg.png)](https://www.emqx.com/en/careers)NanoMQ MQTT Broker (NanoMQ) is a lightweight and blazing-fast MQTT Broker for the IoT Edge platform. 
 
 NanoMQ bases on NNG's asynchronous I/O threading model, with an extension of MQTT support in the protocol layer and reworked transport layer, plus an enhanced asynchronous IO mechanism maximizing the overall capacity.
 
-NanoMQ currently supports MQTT V3.1.1 and partially supports MQTT V5.0.
+NanoMQ currently supports MQTT V3.1.1 and MQTT V5.0.
 
 For more information, please visit [NanoMQ homepage](https://nanomq.io/).
 
@@ -54,18 +54,28 @@ nanomq sub  start --url <url> -t <topic> [--help]
 nanomq conn start --url <url> [--help]
 ```
 
+**NanoMQ MQTT bench usage**
+```bash
+nanomq bench start { pub | sub | conn } [--help]
+```
+
+**NanoMQ nng message proxy**
+
+start a proxy to sub NNG url and convey nng msg to qos 2 MQTT msg and send to a specific topic "nng-mqtt" of MQTT broker:
+```bash
+nanomq nngproxy sub0 --mqtt_url "mqtt-tcp://localhost:1883" --listen "tcp://127.0.0.1:10000" -t nng-mqtt --qos 1
+```
+
+start a proxy sub to topic "nng-mqtt" of MQTT broker, and convert MQTT msg to NNG msg, then pub to NNG url:
+```bash
+nanomq nngproxy pub0 --mqtt_url "mqtt-tcp://localhost:1883" --dial "tcp://127.0.0.1:10000" -t msg --qos 0
+```
+
 **POSIX message queue usage**
 
 ```bash
 nanomq mq start
 nanomq mq stop
-```
-
-*Incoming feature: NanoMQ Zmq usage*
-
-```bash
-nanomq sp req -port 5555
-nanomq sp rep -port 5555
 ```
 
 **Note: NanoMQ provides several ways of configurations so that user can achieve better performance on different platforms**, check [here](#Configuration ) for details.
@@ -83,7 +93,7 @@ With this being said, NanoMQ can run on different architectures such like x86_64
 #### Docker
 
 ```bash
-docker run -d -p 1883:1883 -p 8883:8883 --name nanomq nanomq/nanomq:0.6.0
+docker run -d -p 1883:1883 -p 8883:8883 --name nanomq emqx/nanomq:0.6.6
 ```
 
 
@@ -94,7 +104,7 @@ To build NanoMQ, requires a C99 & C++11 compatible compiler and [CMake](http://w
 - It is recommended to compile with Ninja:
 
   ```bash
-  git clone https://github.com/nanomq/nanomq.git ; cd nanomq
+  git clone https://github.com/emqx/nanomq.git ; cd nanomq
   git submodule update --init --recursive
   mkdir build && cd build
   cmake -G Ninja ..
@@ -104,7 +114,7 @@ To build NanoMQ, requires a C99 & C++11 compatible compiler and [CMake](http://w
 - Or to compile without Ninja:
 
   ``` bash
-  git clone https://github.com/nanomq/nanomq.git ; cd nanomq
+  git clone https://github.com/emqx/nanomq.git ; cd nanomq
   git submodule update --init --recursive
   mkdir build && cd build
   cmake .. 
@@ -128,6 +138,33 @@ ninja
 
   ``` bash
   cmake -G Ninja -DBUILD_CLIENT=OFF ..
+  ninja
+  ```
+**Note (optional): gateway tool isn't built by default**, you can enable it via `-DBUILD_ZMQ_GATEWAY=ON`.
+
+  ``` bash
+  cmake -G Ninja -DBUILD_ZMQ_GATEWAY=ON ..
+  ninja
+  ```
+
+**Note (optional): bench tool isn't built by default**, you can enable it via `-DBUILD_BENCH=ON`.
+
+  ``` bash
+  cmake -G Ninja -DBUILD_BENCH=ON ..
+  ninja
+  ```
+
+**Note (optional): JWT dependency (for http server) isn't built by default**, you can enable it via `-DENABLE_JWT=ON`.
+
+  ``` bash
+  cmake -G Ninja -DENABLE_JWT=ON ..
+  ninja
+  ```
+
+**Note (optional): SQLite3 (for message persistence) isn't built by default**, you can enable it via `-DNNG_ENABLE_SQLITE=ON`.
+
+  ``` bash
+  cmake -G Ninja -DNNG_ENABLE_SQLITE=ON ..
   ninja
   ```
 
@@ -254,7 +291,7 @@ nanomq broker start --conf <$FILE_PATH> [--bridge <$FILE_PATH>] [--auth <$FILE_P
 #### NanoMQ Environment Variables 
 | Variable | Type  | Value |
 | ------------------------------------------------------------ |     ------------------------------------------------------------ | ------------------------------------------------------------ |
-|NANOMQ_BROKER_URL |String | 'nmq-tcp://host:port', 'nmq-tls://host:port'|
+|NANOMQ_BROKER_URL |String | 'nmq-tcp://host:port', 'tls+nmq-tcp://host:port'|
 |NANOMQ_DAEMON |Boolean | Set nanomq as daemon (default: false).|
 |NANOMQ_NUM_TASKQ_THREAD | Integer | Number of taskq threads used, `num` greater than 0 and less than 256.|
 |NANOMQ_MAX_TASKQ_THREAD | Integer | Maximum number of taskq threads used, `num` greater than 0 and less than 256.|
@@ -270,7 +307,7 @@ nanomq broker start --conf <$FILE_PATH> [--bridge <$FILE_PATH>] [--auth <$FILE_P
 |NANOMQ_HTTP_SERVER_USERNAME | String | Http server user name for auth.|
 |NANOMQ_HTTP_SERVER_PASSWORD | String | Http server password for auth.|
 |NANOMQ_TLS_ENABLE|Boolean|Enable TLS connection.|
-|NANOMQ_TLS_URL| String | 'nmq-tls://host:port'.|
+|NANOMQ_TLS_URL| String | 'tls+nmq-tcp://host:port'.|
 |NANOMQ_TLS_CA_CERT_PATH| String | Path to the file containing PEM-encoded CA certificates.|
 |NANOMQ_TLS_CERT_PATH| String |  Path to a file containing the user certificate.|
 |NANOMQ_TLS_KEY_PATH| String | Path to the file containing the user's private PEM-encoded key.|
@@ -290,10 +327,11 @@ nanomq broker start --conf <$FILE_PATH> [--bridge <$FILE_PATH>] [--auth <$FILE_P
   ```
   Creating docker container:
   ```bash
-  docker run -d -p 1883:1883 -p 8883:8883 --name nanomq nanomq/nanomq:0.6.0  \
+  docker run -d -p 1883:1883 -p 8883:8883 \
              -e NANOMQ_BROKER_URL="nmq-tcp://0.0.0.0:1883" \
              -e NANOMQ_TLS_ENABLE=true \
-             -e NANOMQ_TLS_URL="tls+nmq-tcp://0.0.0.0:8883"
+             -e NANOMQ_TLS_URL="tls+nmq-tcp://0.0.0.0:8883" \
+             --name nanomq emqx/nanomq:0.7.4
   ```
 
 - Specify a nanomq config file path.
@@ -303,7 +341,8 @@ nanomq broker start --conf <$FILE_PATH> [--bridge <$FILE_PATH>] [--auth <$FILE_P
   ```
   Creating docker container:
   ```bash
-  docker run -d -p 1883:1883 --name nanomq nanomq/nanomq:0.6.0 -e NANOMQ_CONF_PATH="/usr/local/etc/nanomq.conf"
+  docker run -d -p 1883:1883 -e NANOMQ_CONF_PATH="/usr/local/etc/nanomq.conf" \
+              --name nanomq emqx/nanomq:0.7.4
   ```
 
 #### NanoMQ Command-Line Arguments 
@@ -320,7 +359,7 @@ Usage: nanomq broker { { start | restart [--url <url>] [--conf <path>] [--bridge
                      | stop }
 
 Options: 
-  --url <url>                Specify listener's url: 'nmq-tcp://host:port', 'nmq-tls://host:port' 
+  --url <url>                Specify listener's url: 'nmq-tcp://host:port', 'tls+nmq-tcp://host:port' 
                              or 'nmq-ws://host:port/path' or 'nmq-wss://host:port/path'
   --conf <path>              The path of a specified nanomq configuration file 
   --bridge <path>            The path of a specified bridge configuration file 
@@ -400,8 +439,10 @@ Options:
   ```
 
 - Setting the queue length for a resending message:
+ 'please be aware that this parameter also defines the upper limit of memory used by NanoMQ'
+ 'And affect the flying window of message, please set to > 1024 if you do not want to lose message'
 
-  Default: 64 bytes
+  Default: 256
 
   ```bash
   nanomq broker start|restart --msq_len <num>
@@ -445,7 +486,7 @@ NanoMQ is fully open-sourced!
 
 ### Questions
 
-The [Github Discussions](https://github.com/nanomq/nanomq/discussions) provides a place for you to ask questions and share your ideas with users around the world.
+The [Github Discussions](https://github.com/emqx/nanomq/discussions) provides a place for you to ask questions and share your ideas with users around the world.
 
 
 

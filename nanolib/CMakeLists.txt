@@ -20,6 +20,11 @@ if (DEBUG AND ASAN)
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address")
 endif (DEBUG AND ASAN)
 
+if (DEBUG AND TSAN)
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=thread")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=thread")
+endif (DEBUG AND TSAN)
+
 # Build Types
 set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}
     CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel tsan asan lsan msan ubsan"
@@ -83,6 +88,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
+
 #aux_source_directory(. DIRSRCS)
 
 include_directories(./include)
@@ -95,10 +101,13 @@ find_package(Threads)
 
 # list of source files
 # set(libsrc hash_table.c mqtt_db.c zmalloc.c ) #conf.c file.c cmd.c nano_alloc.c nano_lmq.c)
-set(libsrc hash_table.c mqtt_db.c zmalloc.c conf.c file.c cmd.c nano_alloc.c nano_lmq.c env.c)
+set(libsrc hash_table.c mqtt_db.c zmalloc.c conf.c file.c 
+    cmd.c nano_alloc.c nano_lmq.c env.c 
+    libs/base64.c libs/cJSON.c db_cli.c)
 
 # this is the "object library" target: compiles the sources only once
 add_library(nanolib OBJECT ${libsrc})
+
 
 target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -114,10 +123,15 @@ add_library(nano_shared SHARED $<TARGET_OBJECTS:nanolib>)
 #add_library(nanolib_static STATIC $<TARGET_OBJECTS:nanolib>)
 target_link_libraries(nano_shared ${CMAKE_THREAD_LIBS_INIT})
 
-target_link_libraries(nano_shared ${CMAKE_THREAD_LIBS_INIT})
+if (ENABLE_RULE_ENGINE) 
+    target_link_libraries(nano_shared ${FOUNDATION_LIBRARY})
+endif (ENABLE_RULE_ENGINE)
+
 
 add_executable(nano_test test.c test_hash.c test_dbtree.c)
 target_link_libraries(nano_test nano_shared)
+target_link_libraries(nano_test ${FOUNDATION_LIBRARY})
+
 
 
 install(TARGETS nano_shared EXPORT nanolibConfig

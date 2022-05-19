@@ -16,12 +16,20 @@ if(DEBUG AND ASAN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address")
 endif(DEBUG AND ASAN)
 
+if (DEBUG AND TSAN)
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=thread")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=thread")
+endif (DEBUG AND TSAN)
+
 aux_source_directory(. DIRSRCS)
 
 include_directories(./)
 include_directories(${CMAKE_SOURCE_DIR}/nanomq/include)
 include_directories(${CMAKE_SOURCE_DIR}/nng/include/nng)
 include_directories(${CMAKE_SOURCE_DIR}/nanolib/include)
+if (ENABLE_JWT)
+  include_directories(${CMAKE_SOURCE_DIR}/extern/l8w8jwt/include)
+endif (ENABLE_JWT)
 
 add_subdirectory(apps)
 
@@ -42,14 +50,22 @@ set(SOURCES
     unsub_handler.c
     rest_api.c
     web_server.c
-    libs/base64.c
-    libs/base64.h
-    libs/cJSON.c
-    libs/cJSON.h)
+    webhook_inproc.c
+    webhook_post.c
+    )
+
+include_directories(${FOUNDATION_INCLUDE_DIR})
 
 add_executable(nanomq ${SOURCES})
 
+if (ENABLE_RULE_ENGINE) 
+  target_link_libraries(nanomq ${FOUNDATION_LIBRARY})
+endif (ENABLE_RULE_ENGINE)
+
 # target_link_libraries(nanomq apps nano_shared)
+if (ENABLE_JWT)
+  target_link_libraries(nanomq l8w8jwt)
+endif (ENABLE_JWT)
 target_link_libraries(nanomq apps nanolib)
 target_link_libraries(nanomq nng)
 target_compile_definitions(nanomq PRIVATE -DPARALLEL=${PARALLEL})

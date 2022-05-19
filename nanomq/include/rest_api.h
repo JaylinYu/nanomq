@@ -33,7 +33,8 @@ enum result_code {
 	CLIENT_IS_OFFLINE              = 112,
 	USER_ALREADY_EXISTS            = 113,
 	OLD_PASSWORD_IS_WRONG          = 114,
-	ILLEGAL_SUBJECT                = 115
+	ILLEGAL_SUBJECT                = 115,
+	TOKEN_EXPIRED                  = 116,
 };
 
 typedef struct http_msg {
@@ -49,6 +50,7 @@ typedef struct http_msg {
 	char *   token;
 	size_t   data_len;
 	char *   data;
+	bool     encrypt_data;
 } http_msg;
 
 extern void     put_http_msg(http_msg *msg, const char *content_type,
@@ -67,7 +69,11 @@ extern http_msg process_request(http_msg *msg);
 #define REQ_NODES 3
 #define REQ_SUBSCRIPTIONS 4
 #define REQ_CLIENTS 5
+#define REQ_LOGIN 6
+#define REQ_LOGOUT 7
 
 #define REQ_CTRL 10
+#define REQ_GET_CONFIG 11
+#define REQ_SET_CONFIG 12
 
 #endif
