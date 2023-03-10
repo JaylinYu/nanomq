@@ -5,20 +5,25 @@
 // file was obtained (LICENSE.txt).  A copy of the license may also be
 // found online at https://opensource.org/licenses/MIT.
 //
-#include <nanolib.h>
-#include <nng.h>
-#include <nng/mqtt/packet.h>
+#include "nng/nng.h"
+#include "nng/mqtt/packet.h"
 #include "nng/protocol/mqtt/mqtt_parser.h"
+#include "nng/supplemental/nanolib/nanolib.h"
+#include "nng/supplemental/util/platform.h"
+#include "nng/supplemental/nanolib/log.h"
+#include "nng/supplemental/nanolib/conf.h"
 
 #include "include/broker.h"
 #include "include/nanomq.h"
 #include "include/pub_handler.h"
 #include "include/sub_handler.h"
+#include "include/acl_handler.h"
 
-#define SUPPORT_MQTT5_0 1
-
-static void cli_ctx_merge(client_ctx *ctx, client_ctx *ctx_new);
-
+/**
+ * @brief decode msg in work->payload to create topic_nodes.
+ * @param work nano_work
+ * @return error code
+ */
 int
 decode_sub_msg(nano_work *work)
 {
@@ -29,8 +34,7 @@ decode_sub_msg(nano_work *work)
 	int      len_of_str = 0, len_of_topic = 0;
 	uint8_t  property_id;
 
-	topic_node *       topic_node_t, *_topic_node;
-	topic_with_option *topic_option;
+	topic_node *       tn, *_tn;
 
 	nng_msg *     msg           = work->msg;
 	size_t        remaining_len = nng_msg_remaining_len(msg);
@@ -47,75 +51,75 @@ decode_sub_msg(nano_work *work)
 	// TODO packetid should be checked if it's unused
 	vpos += 2;
 
-#if SUPPORT_MQTT5_0
+	sub_pkt->properties = NULL;
+	sub_pkt->prop_len   = 0;
 	// Only Mqtt_v5 include property.
-	if (PROTOCOL_VERSION_v5 == proto_ver) {
+	if (MQTT_PROTOCOL_VERSION_v5 == proto_ver) {
 		sub_pkt->properties =
-		    decode_properties(msg, &vpos, &sub_pkt->prop_len, true);
+		    decode_properties(msg, (uint32_t *)&vpos, &sub_pkt->prop_len, true);
+		if (check_properties(sub_pkt->properties) != SUCCESS) {
+			return PROTOCOL_ERROR;
+		}
 	}
-#endif
 
-	debug_msg("remainLen: [%ld] packetid : [%d]", remaining_len,
+	log_debug("remainLen: [%ld] packetid : [%d]", remaining_len,
 	    sub_pkt->packet_id);
 	// handle payload
 	payload_ptr = nng_msg_payload_ptr(msg);
 
-	if ((topic_node_t = nng_zalloc(sizeof(topic_node))) == NULL) {
-		debug_msg("ERROR: nng_zalloc");
+	if ((tn = nng_zalloc(sizeof(topic_node))) == NULL) {
+		log_error("nng_zalloc");
 		return NNG_ENOMEM;
 	}
-	topic_node_t->next = NULL;
-	sub_pkt->node      = topic_node_t;
+	tn->next = NULL;
+	sub_pkt->node      = tn;
 
 	while (1) {
-		if ((topic_option = nng_zalloc(sizeof(topic_with_option))) ==
-		    NULL) {
-			debug_msg("ERROR: nng_zalloc");
-			return NNG_ENOMEM;
-		}
-		topic_node_t->it = topic_option;
-		_topic_node      = topic_node_t;
+		_tn      = tn;
 
-		// potential buffer overflow
-		topic_option->topic_filter.body =
-		    copy_utf8_str(payload_ptr, &bpos, &len_of_topic);
+		tn->reason_code  = GRANTED_QOS_2; // default
 
-		topic_option->topic_filter.len = len_of_topic;
-		topic_node_t->it->reason_code  = GRANTED_QOS_2; // default
-
-		if (len_of_topic < 1 || topic_option->topic_filter.body == NULL) {
-			debug_msg("NOT utf8-encoded string OR null string.");
-			topic_node_t->it->reason_code = UNSPECIFIED_ERROR;
-			if (PROTOCOL_VERSION_v5 == proto_ver)
-				topic_node_t->it->reason_code =
-				    TOPIC_FILTER_INVALID;
-			bpos += 3; // ignore option + LSB + MSB
-			goto next;
-		}
-		debug_msg("topic: [%s] len: [%d]",
-		    topic_option->topic_filter.body, len_of_topic);
+		// TODO Decoding topic has potential buffer overflow
+		tn->topic.body =
+		    (char *)copy_utf8_str(payload_ptr, (uint32_t *)&bpos, &len_of_topic);
+		tn->topic.len = len_of_topic;
+		log_info("topic: [%s] len: [%d]", tn->topic.body, len_of_topic);
 		len_of_topic = 0;
 
-		topic_option->rap = 1; // Default Setting
-		memcpy(topic_option, payload_ptr + bpos, 1);
-		if (topic_option->retain_handling > 2 || topic_option->topic_filter.body == NULL) {
-			debug_msg("ERROR: error in retain_handling");
-			topic_node_t->it->reason_code = UNSPECIFIED_ERROR;
+		if (tn->topic.len < 1 || tn->topic.body == NULL) {
+			log_error("NOT utf8-encoded string OR null string.");
+			tn->reason_code = UNSPECIFIED_ERROR;
+			if (MQTT_PROTOCOL_VERSION_v5 == proto_ver)
+				tn->reason_code = TOPIC_FILTER_INVALID;
+			bpos += 1; // ignore option
+			goto next;
+		}
+
+		tn->rap = 1; // Default Setting
+		memcpy(tn, payload_ptr + bpos, 1);
+		if (tn->retain_handling > 2) {
+			log_error("error in retain_handling");
+			tn->reason_code = UNSPECIFIED_ERROR;
 			return PROTOCOL_ERROR;
 		}
 		bpos ++;
-		// TODO sub action when retain_handling equal 0 or 1 or 2
+
+		// Setting no_local on shared subscription is invalid
+		if (MQTT_VERSION_V5 == proto_ver &&
+		    strncmp(tn->topic.body, "$share/", strlen("$share/")) == 0 &&
+		    tn->no_local == 1) {
+			tn->reason_code = UNSPECIFIED_ERROR;
+			return PROTOCOL_ERROR;
+		}
 
 next:
-		debug_msg("bpos+vpos: [%d]", bpos + vpos);
 		if (bpos < remaining_len - vpos) {
-			if ((topic_node_t = nng_zalloc(sizeof(topic_node))) ==
-			    NULL) {
-				debug_msg("ERROR: nng_zalloc");
+			if (NULL == (tn = nng_zalloc(sizeof(topic_node)))) {
+				log_error("nng_zalloc");
 				return NNG_ENOMEM;
 			}
-			topic_node_t->next = NULL;
-			_topic_node->next  = topic_node_t;
+			tn->next = NULL;
+			_tn->next  = tn;
 		} else {
 			break;
 		}
@@ -123,6 +127,12 @@ next:
 	return 0;
 }
 
+/**
+ * @brief encode a suback nng_msg via nano_work.
+ * @param msg suback nng_msg
+ * @param work nano_work
+ * @return error code
+ */
 int
 encode_suback_msg(nng_msg *msg, nano_work *work)
 {
@@ -134,7 +144,7 @@ encode_suback_msg(nng_msg *msg, nano_work *work)
 	uint8_t     reason_code, cmd;
 	uint32_t    remaining_len, len_of_properties;
 	int         len_of_varint, rv;
-	topic_node *node;
+	topic_node *tn;
 
 	packet_subscribe *sub_pkt;
 	if ((sub_pkt = work->sub_pkt) == NULL)
@@ -145,46 +155,44 @@ encode_suback_msg(nng_msg *msg, nano_work *work)
 	// handle variable header first
 	NNI_PUT16(packet_id, sub_pkt->packet_id);
 	if ((rv = nng_msg_append(msg, packet_id, 2)) != 0) {
-		debug_msg("ERROR: nng_msg_append [%d]", rv);
+		log_error("nng_msg_append [%d]", rv);
 		return PROTOCOL_ERROR;
 	}
 
-#if SUPPORT_MQTT5_0
-	if (PROTOCOL_VERSION_v5 == proto_ver) { // add property in variable
+	if (MQTT_PROTOCOL_VERSION_v5 == proto_ver) { // add property in variable
 		encode_properties(msg, NULL, CMD_SUBACK);
 	}
-#endif
 
 	// Note. packetid should be non-zero, BUT in order to make subclients
 	// known that, we return an error(ALREADY IN USE)
 	reason_code = PACKET_IDENTIFIER_IN_USE;
 	if (sub_pkt->packet_id == 0) {
 		if ((rv = nng_msg_append(msg, &reason_code, 1)) != 0) {
-			debug_msg("ERROR: nng_msg_append [%d]", rv);
+			log_error("nng_msg_append [%d]", rv);
 			return PROTOCOL_ERROR;
 		}
 	}
 
-	// Note. When packet_id is zero, node must be empty. So, Dont worry
-	// the order of reasone codes would be changed.
+	// Note. When packet_id is zero, topic node must be empty. So, Dont worry
+	// about that the order of reason codes would be changed.
 	// handle payload
-	node = sub_pkt->node;
-	while (node) {
-		reason_code = node->it->reason_code;
+	tn = sub_pkt->node;
+	while (tn) {
+		reason_code = tn->reason_code;
 		// MQTT_v3: 0x00-qos0  0x01-qos1  0x02-qos2  0x80-fail
 		if ((rv = nng_msg_append(msg, &reason_code, 1)) != 0) {
-			debug_msg("ERROR: nng_msg_append [%d]", rv);
+			log_error("nng_msg_append [%d]", rv);
 			return PROTOCOL_ERROR;
 		}
-		node = node->next;
-		debug_msg("reason_code: [%x]", reason_code);
+		tn = tn->next;
+		log_debug("reason_code: [%x]", reason_code);
 	}
 
 	// If NOT find any reason codes
 	if (!sub_pkt->node && sub_pkt->packet_id != 0) {
 		reason_code = UNSPECIFIED_ERROR;
 		if ((rv = nng_msg_append(msg, &reason_code, 1)) != 0) {
-			debug_msg("ERROR: nng_msg_append [%d]", rv);
+			log_error("nng_msg_append [%d]", rv);
 			return PROTOCOL_ERROR;
 		}
 	}
@@ -192,18 +200,18 @@ encode_suback_msg(nng_msg *msg, nano_work *work)
 	// handle fixed header
 	cmd = CMD_SUBACK;
 	if ((rv = nng_msg_header_append(msg, (uint8_t *) &cmd, 1)) != 0) {
-		debug_msg("ERROR: nng_msg_header_append [%d]", rv);
+		log_error("nng_msg_header_append [%d]", rv);
 		return PROTOCOL_ERROR;
 	}
 
 	remaining_len = (uint32_t) nng_msg_len(msg);
 	len_of_varint = put_var_integer(varint, remaining_len);
 	if ((rv = nng_msg_header_append(msg, varint, len_of_varint)) != 0) {
-		debug_msg("ERROR: nng_msg_header_append [%d]", rv);
+		log_error("nng_msg_header_append [%d]", rv);
 		return PROTOCOL_ERROR;
 	}
 
-	debug_msg("remain: [%d] "
+	log_debug("remain: [%d] "
 	          "varint: [%d %d %d %d] "
 	          "len: [%d] "
 	          "packetid: [%x %x] ",
@@ -218,376 +226,151 @@ encode_suback_msg(nng_msg *msg, nano_work *work)
 int
 sub_ctx_handle(nano_work *work)
 {
-	topic_node *        tn = work->sub_pkt->node;
-	char *              topic_str    = NULL;
-	char *              clientid     = NULL;
-	int                 topic_len    = 0;
-	struct topic_queue *tq           = NULL;
-	int      topic_exist             = 0;
-	uint32_t clientid_key            = 0;
-	dbtree_retain_msg **r            = NULL;
+	if (!work->sub_pkt || !work->sub_pkt->node) {
+		return -1;
+	}
+	topic_node *tn = work->sub_pkt->node;
 
-	client_ctx * old_ctx    = NULL;
+	char *topic_str = NULL;
+	int   topic_len = 0, topic_exist = 0;
 
 	if (work->sub_pkt->packet_id == 0) {
-		return PROTOCOL_ERROR;
+		return -2;
 	}
 
-	client_ctx * cli_ctx = NULL;
-	if ((cli_ctx = nng_zalloc(sizeof(client_ctx))) == NULL) {
-		debug_msg("ERROR: nng_zalloc");
-		return NNG_ENOMEM;
-	}
-	cli_ctx->sub_pkt        = work->sub_pkt;
-	cli_ctx->cparam         = work->cparam;
-	cli_ctx->pid            = work->pid;
-	cli_ctx->proto_ver      = work->proto_ver;
-
-	clientid = (char *) conn_param_get_clientid(
-	    (conn_param *) nng_msg_get_conn_param(work->msg));
-	if (clientid) {
-		clientid_key = DJBHashn(clientid, strlen(clientid));
-	}
-
-	// get ctx from tree TODO optimization here
-	tq = dbhash_get_topic_queue(cli_ctx->pid.id);
-
-	if (tq) {
-		old_ctx = dbtree_find_client(
-		    work->db, tq->topic, cli_ctx->pid.id);
-	}
-
-	if (old_ctx) {
-		dbtree_insert_client(
-		    work->db, tq->topic, old_ctx, cli_ctx->pid.id, old_ctx->proto_ver);
-	}
-
-	if (!tq || !old_ctx) { /* the real ctx stored in tree */
-		if ((old_ctx = nng_zalloc(sizeof(client_ctx))) == NULL){
-			debug_msg("ERROR: nng_zalloc");
-			return NNG_ENOMEM;
-		}
-		if ((old_ctx->sub_pkt = nng_zalloc(sizeof(packet_subscribe))) == NULL) {
-			debug_msg("ERROR: nng_zalloc");
-			return NNG_ENOMEM;
-		}
-		old_ctx->sub_pkt->node = NULL;
-		old_ctx->cparam        = NULL;
 #ifdef STATISTICS
-		old_ctx->recv_cnt      = 0;
+	// TODO
 #endif
-	}
-	/* Swap pid, capram, proto_ver in ctxs */
-	old_ctx->pid.id    = cli_ctx->pid.id;
-	old_ctx->proto_ver = cli_ctx->proto_ver;
-	conn_param *cp     = old_ctx->cparam;
-	old_ctx->cparam    = cli_ctx->cparam;
-	cli_ctx->cparam    = cp;
 
-	// clean session handle.
-	debug_msg("clean session handle");
-	cli_ctx_merge(cli_ctx, old_ctx);
-	destroy_sub_ctx(cli_ctx);
+	dbtree_retain_msg **r = NULL;
 
 	while (tn) {
-		topic_len = tn->it->topic_filter.len;
-		topic_str = tn->it->topic_filter.body;
-		debug_msg("topicLen: [%d] body: [%s]", topic_len, topic_str);
+		topic_len = tn->topic.len;
+		topic_str = tn->topic.body;
+		log_debug("topicLen: [%d] body: [%s]", topic_len, topic_str);
 
-		/* remove duplicate items */
-		topic_exist = 0;
-		tq          = dbhash_get_topic_queue(work->pid.id);
-		while (topic_str && tq) {
-			if (!strcmp(topic_str, tq->topic)) {
-				topic_exist = 1;
-				break;
+		if (!topic_str)
+			goto next;
+#ifdef ACL_SUPP
+		/* Add items which not included in dbhash */
+		if (work->config->acl.enable) {
+			bool auth_result = auth_acl(
+			    work->config, ACL_SUB, work->cparam, topic_str);
+			if (!auth_result) {
+				log_warn("acl deny");
+				tn->reason_code = NMQ_AUTH_SUB_ERROR;
+				if (work->config->acl_deny_action ==
+				    ACL_DISCONNECT) {
+					log_warn(
+					    "acl deny, disconnect client");
+					// TODO disconnect client or return
+					// error code
+					goto next;
+				}
+			} else {
+				log_info("acl allow");
 			}
-			tq = tq->next;
 		}
-		if (!topic_exist && topic_str) {
-			uint8_t ver = work->proto_ver;
-			dbtree_insert_client(
-			    work->db, topic_str, old_ctx, work->pid.id, ver);
+#endif
 
-			dbhash_insert_topic(work->pid.id, topic_str);
+		topic_exist = dbhash_check_topic(work->pid.id, topic_str);
+		if (!topic_exist) {
+			dbtree_insert_client(
+			    work->db, topic_str, work->pid.id);
+
+			dbhash_insert_topic(work->pid.id, topic_str, tn->qos);
 		}
+
 		// Note.
 		// if topic already exists then update sub options.
-		// qos, retain handling, no local (did in cli_ctx_merge)
+		// qos, retain handling, no local (already did in protocol
+		// layer)
 
-		uint8_t rh = tn->it->retain_handling;
-		if (topic_str)
-			if (rh == 0 || (rh == 1 && !topic_exist))
-				r = dbtree_find_retain(work->db_ret, topic_str);
-		if (r) {
-			for (int i = 0; i < cvector_size(r); i++) {
-				if (!r[i])
-					continue;
-				cvector_push_back(
-				    work->msg_ret, (nng_msg *) r[i]->message);
-			}
+		// Retain msg
+		uint8_t rh = tn->retain_handling;
+
+		if (rh == 0 || (rh == 1 && !topic_exist))
+			r = dbtree_find_retain(work->db_ret, topic_str);
+
+		if (!r)
+			goto next;
+
+		for (size_t i = 0; i < cvector_size(r); i++) {
+			if (!r[i])
+				continue;
+			cvector_push_back(work->msg_ret, r[i]->message);
 		}
 		cvector_free(r);
 
+	next:
 		tn = tn->next;
 	}
 
 #ifdef DEBUG
-	// check treeDB
 	dbtree_print(work->db);
 #endif
-	debug_msg("end of sub ctx handle. \n");
+	log_debug("end of sub ctx handle.\n");
 	return 0;
 }
 
-static void
-cli_ctx_merge(client_ctx *ctx_new, client_ctx *ctx)
+int
+sub_ctx_del(void *db, char *topic, uint32_t pid)
 {
-	int                is_find = 0;
-	struct topic_node *node, *node_new, *node_prev = NULL;
-	struct topic_node *node_a = NULL;
-	topic_with_option *two    = NULL;
-	char *             str    = NULL;
-	if (ctx->pid.id != ctx_new->pid.id) {
-		return;
-	}
+	dbtree_delete_client((dbtree *)db, topic, pid);
 
-#if SUPPORT_MQTT5_0
-	if (ctx_new->sub_pkt->prop_len > 0) {
-		ctx->sub_pkt->properties = ctx_new->sub_pkt->properties;
-	}
-#endif
+	dbhash_del_topic(pid, topic);
 
-#ifdef DEBUG /* Remove after testing */
-	debug_msg("stored ctx:");
-	node = ctx->sub_pkt->node;
-	while (node) {
-		debug_msg("%s", node->it->topic_filter.body);
-		node = node->next;
-	}
-	debug_msg("new ctx");
-	node_new = ctx_new->sub_pkt->node;
-	while (node_new) {
-		debug_msg("%s", node_new->it->topic_filter.body);
-		node_new = node_new->next;
-	}
-#endif
+	return 0;
+}
 
-	node_new = ctx_new->sub_pkt->node;
-	while (node_new) {
-		node      = ctx->sub_pkt->node;
-		node_prev = NULL;
-		is_find   = 0;
-		//TODO optimize logic here with (FOREACH)
-		while (node) {
-			if (node_new->it->topic_filter.body != NULL)
-			if (strcmp(node->it->topic_filter.body,
-			        node_new->it->topic_filter.body) == 0) {
-				is_find = 1;
-				break;
-			}
-			node_prev = node;
-			node      = node->next;
-		}
-		if (is_find) {
-			// update option
-			node->it->no_local = node_new->it->no_local;
-			node->it->qos      = node_new->it->qos;
-			node->it->rap      = node_new->it->rap;
-			node->it->retain_handling =
-			    node_new->it->retain_handling;
-		} else { /* not find */
-			// copy and append TODO optimize topic_node structure
-			if (node_new->it->topic_filter.len < 1 ||
-			    node_new->it->topic_filter.body == NULL) {
-				debug_msg("next topic ");
-				node_new = node_new->next;
-				continue;
-			}
+static void *
+destroy_sub_client_cb(void *args, char *topic)
+{
+	sub_destroy_info *des = (sub_destroy_info *) args;
 
-			if (((node_a = nng_zalloc(sizeof(topic_node))) ==
-			        NULL) ||
-			    ((two = nng_zalloc(sizeof(topic_with_option))) ==
-			        NULL) ||
-			    ((str = nng_zalloc(node_new->it->topic_filter.len +
-			          1)) == NULL)) {
-				debug_msg("ERROR: nng_zalloc");
-				return;
-			}
+	dbtree_delete_client(des->db, topic, des->pid);
 
-			memcpy(two, node_new->it, sizeof(topic_with_option));
-			strcpy(str, node_new->it->topic_filter.body);
-			str[node_new->it->topic_filter.len] = '\0';
-			node_a->it                          = two;
-			two->topic_filter.body              = str;
-			node_a->next                        = NULL;
-			if (!node_prev) {
-				ctx->sub_pkt->node = node_a;
-			} else {
-				node_prev->next = node_a;
-			}
-		}
-		node_new = node_new->next;
-	}
+	return NULL;
+}
 
-#ifdef DEBUG /* Remove after testing */
-	debug_msg("after change.");
-	debug_msg("stored ctx:");
-	node = ctx->sub_pkt->node;
-	while (node) {
-		debug_msg("%s", node->it->topic_filter.body);
-		node = node->next;
-	}
-	debug_msg("new ctx");
-	node_new = ctx_new->sub_pkt->node;
-	while (node_new) {
-		debug_msg("%s", node_new->it->topic_filter.body);
-		node_new = node_new->next;
-	}
-#endif
+// Call by disconnect ev, if disconnect, delete all node which 
+// this pipe subscribed on tree and topic_queue,  free db_ctxt,
+// if it's ref == 0 delete it.
+void
+destroy_sub_client(uint32_t pid, dbtree * db)
+{
+	sub_destroy_info sdi = {
+		.pid = pid,
+		.db = db,
+	};
+
+	dbhash_del_topic_queue(pid, &destroy_sub_client_cb, (void *) &sdi);
+
+	return;
 }
 
 void
-del_sub_ctx(void *ctxt, char *target_topic)
+sub_pkt_free(packet_subscribe *sub_pkt)
 {
-	client_ctx *      cli_ctx           = ctxt;
-	topic_node *      topic_node_t      = NULL;
-	topic_node *      before_topic_node = NULL;
-	packet_subscribe *sub_pkt           = NULL;
-
-	if (!cli_ctx || !cli_ctx->sub_pkt) {
-		debug_msg("ERROR : ctx or sub_pkt is null!");
-		return;
-	}
-
-	sub_pkt           = cli_ctx->sub_pkt;
-	topic_node_t      = sub_pkt->node;
-	before_topic_node = NULL;
-
-	while (topic_node_t) {
-		if (!strcmp(
-		        topic_node_t->it->topic_filter.body, target_topic)) {
-			debug_msg("FREE in topic_node [%s] in tree",
-			    topic_node_t->it->topic_filter.body);
-			if (before_topic_node) {
-				before_topic_node->next = topic_node_t->next;
-			} else {
-				sub_pkt->node = topic_node_t->next;
-			}
-
-			nng_free(topic_node_t->it->topic_filter.body,
-			    topic_node_t->it->topic_filter.len);
-			nng_free(topic_node_t->it, sizeof(topic_with_option));
-			nng_free(topic_node_t, sizeof(topic_node));
-			break;
-		}
-		before_topic_node = topic_node_t;
-		topic_node_t      = topic_node_t->next;
-	}
-}
-
-void
-destroy_sub_pkt(packet_subscribe *sub_pkt, uint8_t proto_ver)
-{
-	topic_node *topic_node_t, *next_topic_node;
-	if (!sub_pkt) {
-		return;
-	}
-	topic_node_t    = sub_pkt->node;
-	next_topic_node = NULL;
-	while (topic_node_t) {
-		next_topic_node = topic_node_t->next;
-		nng_free(topic_node_t->it->topic_filter.body,
-		    topic_node_t->it->topic_filter.len);
-		nng_free(topic_node_t->it, sizeof(topic_with_option));
-		nng_free(topic_node_t, sizeof(topic_node));
-		topic_node_t = next_topic_node;
-	}
-
-	if (sub_pkt) {
-#if SUPPORT_MQTT5_0
-		// what if there are multiple UPs?
-		if (PROTOCOL_VERSION_v5 == proto_ver) {
-			if (sub_pkt->prop_len > 0) {
-				property_free(sub_pkt->properties);
-				sub_pkt->prop_len = 0;
-			}
-		}
-#endif
-	}
-	if (sub_pkt) {
-		nng_free(sub_pkt, sizeof(packet_subscribe));
-		sub_pkt = NULL;
-	}
-}
-
-void
-destroy_sub_ctx(void *ctxt)
-{
-	client_ctx *cli_ctx = ctxt;
-
-	if (!cli_ctx) {
-		debug_msg("ERROR : ctx or sub_pkt is null!");
-		return;
-	}
-	nng_free(cli_ctx, sizeof(client_ctx));
-}
-
-void
-destroy_sub_client(uint32_t pid, dbtree * db, void *ctx)
-{
-	client_ctx * cli_ctx = NULL, *ctx2 = NULL;
-	dbtree_ctxt * db_ctxt = NULL;
-	topic_queue *tq = dbhash_get_topic_queue(pid);
-	// Free from dbtree
-	if (!ctx) {
-		// Call by Disconnect event
-		db_ctxt = dbtree_find_client(db, tq->topic, pid);
-		// Ref > 1, So let puber to delete
-		if ((ctx2 = dbtree_delete_ctxt(db, db_ctxt)) == NULL)
-			return;
-	}
-	while (tq) {
-		cli_ctx = NULL;
-		if (tq->topic) {
-			if (!ctx) {
-				// Call by Disconnect event
-				cli_ctx = ctx2;
-				// Ref == 1, so delete
-			} else {
-				// Call by Publish
-				cli_ctx = ctx;
-			}
-			if (cli_ctx)
-				del_sub_ctx(cli_ctx, tq->topic);
-			dbtree_delete_client(db, tq->topic, 0, pid);
-		}
-		tq = tq->next;
-	}
-
-	if (!cli_ctx)
+	if (!sub_pkt)
 		return;
 
-	packet_subscribe *sub_pkt = cli_ctx->sub_pkt;
-	uint8_t proto_ver = cli_ctx->proto_ver;
+	topic_node *tn, *next_tn;
+	tn = sub_pkt->node;
+	next_tn = NULL;
 
-	if (sub_pkt->node == NULL) {
-#if SUPPORT_MQTT5_0
-		if (PROTOCOL_VERSION_v5 == proto_ver) {
-			if (sub_pkt->prop_len > 0) {
-				property_free(sub_pkt->properties);
-				sub_pkt->prop_len = 0;
-			}
-		}
-#endif
-		nng_free(sub_pkt, sizeof(packet_subscribe));
-		nng_free(cli_ctx, sizeof(client_ctx));
-		cli_ctx = NULL;
-	} else {
-		debug_msg("It should not happened.");
+	while (tn) {
+		next_tn = tn->next;
+		nng_free(tn->topic.body, tn->topic.len);
+		nng_free(tn, sizeof(topic_node));
+		tn = next_tn;
 	}
 
-	// Free from dbhash
-	dbhash_del_topic_queue(pid);
+	// what if there are multiple UPs?
+	if (sub_pkt->prop_len > 0) {
+		property_free(sub_pkt->properties);
+		sub_pkt->prop_len = 0;
+	}
+	nng_free(sub_pkt, sizeof(packet_subscribe));
 }
 

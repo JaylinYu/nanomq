@@ -1,10 +1,62 @@
 # QuickStart
 
+## Install from packagecloud source
 
+### Install via DEB source
+
+```shell
+curl -s https://assets.emqx.com/scripts/install-nanomq-deb.sh | sudo bash
+sudo apt-get install nanomq
+```
+
+### Install Deb package manually 
+```shell
+sudo bash -c 'cat << EOF > /etc/apt/sources.list.d/emqx_nanomq.list
+deb [signed-by=/usr/share/keyrings/emqx_nanomq-archive-keyring.gpg] https://packages.emqx.com/emqx/nanomq/any/ any main
+deb-src [signed-by=/usr/share/keyrings/emqx_nanomq-archive-keyring.gpg] https://packages.emqx.com/emqx/nanomq/any/ any main
+EOF'
+
+gpg_key_url="https://packages.emqx.com/emqx/nanomq/gpgkey"
+gpg_keyring_path="/usr/share/keyrings/emqx_nanomq-archive-keyring.gpg"
+curl -fsSL "${gpg_key_url}" | gpg --dearmor > ${gpg_keyring_path}
+mv ${gpg_keyring_path} /etc/apt/trusted.gpg.d/emqx_nanomq.gpg
+
+sudo apt-get update
+sudo apt-get install nanomq
+```
+
+
+
+### Install via RPM source
+
+```shell
+curl -s https://assets.emqx.com/scripts/install-nanomq-rpm.sh | sudo bash
+sudo yum install -y nanomq
+```
+
+### Install RPM package manually 
+
+```shell
+sudo bash -c 'cat << EOF > /etc/yum.repos.d/emqx_nanomq.repo
+[emqx_nanomq]
+name=emqx_nanomq
+baseurl=https://packages.emqx.com/emqx/nanomq/rpm_any/rpm_any/$basearch
+repo_gpgcheck=1
+gpgcheck=0
+enabled=1
+gpgkey=https://packages.emqx.com/emqx/nanomq/gpgkey
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+EOF'
+
+sudo yum -q makecache -y --disablerepo='*' --enablerepo='emqx_nanomq'
+sudo yum install -y nanomq
+```
 
 ## Compile & Install
 
-To build NanoMQ, you will need a C99 & C++11 compatible compiler and [CMake](https://www.cmake.org/) version 3.13 or newer.
+To build NanoMQ, you will need a C99 compatible compiler and [CMake](https://www.cmake.org/) version 3.13 or newer.
 
 Basically, you need to compile and install NanoMQ by following steps :
 
@@ -35,34 +87,13 @@ cmake -DNNG_ENABLE_TLS=ON ..
 ```
 > View config file `nanomq.conf` for more parameters about TLS.
 
-
-## Compile dependency
-
-Please be aware that NanoMQ depends on nanolib & nng
-
-both dependencies can be compiled independently
-
-```bash
-$PROJECT_PATH/nanomq/nng/build$ cmake -G Ninja ..
-$PROJECT_PATH/nanomq/nng/build$ ninja install
-```
-
-compile nanolib independently:
-
-```bash
-$PROJECT_PATH/nanolib/build$ cmake -G Ninja ..
-$PROJECT_PATH/nanolib/build$ ninja install
-```
-
-
-
 ## Start MQTT Broker
 
 ```bash
-nanomq broker start &
+nanomq start
 ```
 
-Currently, NanoMQ only supports MQTT 3.1.1, partially supports MQTT 5.0
+Currently, NanoMQ supports MQTT 3.1.1 & 5.0, MQTT 3.1 is not included
 
 
 
@@ -70,19 +101,11 @@ Currently, NanoMQ only supports MQTT 3.1.1, partially supports MQTT 5.0
 
 ```bash
 # Publish
-nanomq pub  start --url <url> -t <topic> -m <message> [--help]
+nanomq_cli pub --url <url> -t <topic> -m <message> [--help]
 
 # Subscribe
-nanomq sub  start --url <url> -t <topic> [--help]
+nanomq_cli sub --url <url> -t <topic> [--help]
 
 # Connect*
-nanomq conn start --url <url> [--help]
-```
-
-
-
-## Test POSIX message Queue
-
-```sh
-nanomq mq start/stop
+nanomq_cli conn --url <url> [--help]
 ```

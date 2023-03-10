@@ -11,11 +11,49 @@
 #define REST_API_H
 
 #include "web_server.h"
+#include "mqtt_api.h"
 #include <ctype.h>
 #include <nng/nng.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define REST_URI_ROOT "/api/v4"
+#define REST_HOST "http://0.0.0.0:%u"
+#define REST_URL REST_HOST REST_URI_ROOT
+
+#define getNumberValue(obj, item, key, value, rv)           \
+	{                                                   \
+		item = cJSON_GetObjectItem(obj, key);       \
+		if (cJSON_IsNumber(item)) {                 \
+			value = cJSON_GetNumberValue(item); \
+			rv    = (0);                        \
+		} else {                                    \
+			rv = (-1);                          \
+		}                                           \
+	}
+
+#define getBoolValue(obj, item, key, value, rv)       \
+	{                                             \
+		item = cJSON_GetObjectItem(obj, key); \
+		if (cJSON_IsBool(item)) {             \
+			value = cJSON_IsTrue(item);   \
+			rv    = (0);                  \
+		} else {                              \
+			rv = (-1);                    \
+		}                                     \
+	}
+
+#define getStringValue(obj, item, key, value, rv)           \
+	{                                                   \
+		item = cJSON_GetObjectItem(obj, key);       \
+		if (cJSON_IsString(item)) {                 \
+			value = cJSON_GetStringValue(item); \
+			rv    = (0);                        \
+		} else {                                    \
+			rv = (-1);                          \
+		}                                           \
+	}
 
 enum result_code {
 	SUCCEED                        = 0,
@@ -57,7 +95,8 @@ extern void     put_http_msg(http_msg *msg, const char *content_type,
         const char *method, const char *uri, const char *token, const char *data,
         size_t data_sz);
 extern void     destory_http_msg(http_msg *msg);
-extern http_msg process_request(http_msg *msg);
+extern http_msg process_request(
+    http_msg *msg, conf_http_server *config, nng_socket *sock);
 
 #define GET_METHOD "GET"
 #define POST_METHOD "POST"
@@ -75,5 +114,15 @@ extern http_msg process_request(http_msg *msg);
 #define REQ_CTRL 10
 #define REQ_GET_CONFIG 11
 #define REQ_SET_CONFIG 12
+#define REQ_TREE 13
+
+#define cJSON_AddStringOrNullToObject(obj, name, value)            \
+	{                                                          \
+		if (value) {                                       \
+			cJSON_AddStringToObject(obj, name, value); \
+		} else {                                           \
+			cJSON_AddNullToObject(obj, name);          \
+		}                                                  \
+	}
 
 #endif

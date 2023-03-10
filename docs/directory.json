@@ -13,8 +13,12 @@
       "path": "features"
     },
     {
-      "title": "配置说明",
-      "path": "config-description"
+      "title": "配置说明(v014)",
+      "path": "config-description/v014"
+    },
+    {
+      "title": "配置说明(v013)",
+      "path": "config-description/v013"
     },
     {
       "title": "编译选项",
@@ -22,7 +26,11 @@
     },
     {
       "title": "HTTP APIs",
-      "path": "http-api"
+      "path": "http-api/v4"
+    },
+    {
+      "title": "HTTP-API (v1)",
+      "path": "http-api/v1"
     },
     {
       "title": "Web Hook",
@@ -35,7 +43,12 @@
     {
       "title": "测试报告",
       "path": "test-report"
+    },
+    {
+      "title": "ZMQ 网关",
+      "path": "zmq-gateway"
     }
+    
   ],
   "en": [
     {
@@ -47,9 +60,14 @@
       "path": "quick-start"
     },
     {
-      "title": "Configuration",
-      "path": "config-description"
+      "title": "Configuration(v014)",
+      "path": "config-description/v014"
     },
+    {
+      "title": "Configuration(v013)",
+      "path": "config-description/v013"
+    },
+
     {
       "title": "Features",
       "path": "features"
@@ -60,7 +78,11 @@
     },
     {
       "title": "HTTP APIs",
-      "path": "http-api"
+      "path": "http-api/v4"
+    },
+    {
+      "title": "HTTP-API (v1)",
+      "path": "http-api/v1"
     },
     {
       "title": "Web Hook",
@@ -73,6 +95,10 @@
     {
       "title": "Test Report",
       "path": "test-report"
+    },
+    {
+      "title": "ZMQ Gateway",
+      "path": "zmq-gateway"
     }
   ]
 }

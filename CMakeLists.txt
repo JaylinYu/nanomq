@@ -5,20 +5,35 @@
 # found online at https://opensource.org/licenses/MIT.
 # not finished yet #
 
-cmake_minimum_required (VERSION 2.8.8)
-SET(CMAKE_C_FLAGS "-std=c99")
-SET(CMAKE_CXX_FLAGS "-std=c++11 -O3")
+cmake_minimum_required (VERSION 2.8.12)
+SET(CMAKE_C_STANDARD 99)
 
 project(nanomq-nng)
 
 include(CheckCCompilerFlag)
 
+set(CMAKE_MODULE_PATH
+  ${CMAKE_MODULE_PATH}
+  "${CMAKE_CURRENT_LIST_DIR}/cmake"
+)
+
+include(NanoMQHelpers)
+
+option (BUILD_NANOMQ_CLI "Build nanomq CLI" OFF)
 option (BUILD_CLIENT "Build nanomq client" ON)
+option (BUILD_QUIC_CLI "Build quic client" OFF)
 option (BUILD_NNG_PROXY "Build nng proxy" ON)
 option (BUILD_ZMQ_GATEWAY "Build zmq gateway" OFF)
+option (BUILD_VSOMEIP_GATEWAY "Build vsomeip gateway" OFF)
+option (BUILD_DDS_PROXY "Build dds proxy" OFF)
 option (BUILD_BENCH "Build nano-bench" OFF)
 option (ENABLE_JWT "Enable jwt library" OFF)
 option (ENABLE_RULE_ENGINE "Enable rule engine" OFF)
+option (ENABLE_AWS_BRIDGE "Enable aws bridge" OFF)
+option (ENABLE_SYSLOG "Enable syslog" ON)
+option (NOLOG "Disable log" OFF)
+option (ENABLE_ACL "Enable ACL" ON)
+option (NANOMQ_TESTS "Enable nanomq unit tests" OFF)
 
 set (NNG_PROTO_MQTT_BROKER  ON)
 set (NNG_TRANSPORT_MQTT_BROKER_TCP ON)
@@ -29,15 +44,18 @@ set (FDB_DFT_DATABASE NULL)
 if (NNG_ENABLE_TLS) 
   set (NNG_TRANSPORT_MQTT_BROKER_TLS ON)
   set (NNG_TRANSPORT_MQTT_BROKER_WSS ON)
-endif()
-
-if (NNG_ENABLE_TLS) 
   add_definitions(-DNNG_SUPP_TLS)
 endif()
 
-if (BUILD_BENCH) 
-  add_definitions(-DSUPP_BENCH)
+if (NNG_ENABLE_SQLITE)
+  add_definitions(-DNNG_SUPP_SQLITE)
 endif()
+
+if (NANOMQ_TESTS)
+    enable_testing()
+    set(all_tests, "")
+    set(BUILD_STATIC_LIB ON)
+endif ()
 
 # If the compiler is not on Windows, does it support hiding the
 # symbols by default?  For shared libraries we would like to do this.
@@ -117,83 +135,131 @@ else ()
     set(NANO_PLATFORM_POSIX ON)
 endif ()
 
-
-set(CMAKE_MODULE_PATH
-  ${CMAKE_MODULE_PATH}
-  "${CMAKE_CURRENT_LIST_DIR}/cmake"
-)
-
-if (NOT DEFINED CFG_METHOD)
-  message(STATUS "Default config method [CMAKE_CONFIG]")
-  SET (CFG_METHOD CMAKE_CONFIG)
+if (NANO_PLATFORM_WINDOWS)
+  set (ENABLE_SYSLOG OFF)
 endif ()
 
-if ("${CFG_METHOD}" STREQUAL "FILE_CONFIG")
-  include(${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.in)
-elseif ("${CFG_METHOD}" STREQUAL "CMAKE_CONFIG")
-  SET(NOLOG 1 CACHE STRING "run NanoMQ without printing log")
-  SET(MQ 1 CACHE STRING "build this project suport mq")
-  SET(NOWARNING 0 CACHE STRING "run NanoMQ without printing warning")
-  SET(DEBUG 0 CACHE STRING "gdb support")
-  SET(ASAN 0 CACHE STRING "asan support")
-  SET(TSAN 0 CACHE STRING "tsan support")
-  SET(PARALLEL 32 CACHE STRING "Parallelism (min 4, max 1000)")
-else ()
-  message(FATAL_ERROR "CFG_METHOD ERROR.")
+if (NOT NOLOG)
+  add_definitions(-DENABLE_LOG)
+
+  if (ENABLE_SYSLOG)
+    add_definitions(-DSUPP_SYSLOG)
+  endif ()
+
 endif ()
 
-message("--configure--")
-if (NOLOG)
-  message("LOG=OFF")
-  add_definitions(-DNOLOG)
-else ()
-  message("LOG=ON")
-endif (NOLOG)
+message("-- NanoMQ versions --")
+# Determine NanoMQ versions.
+file(READ "nanomq/include/version.h" nano_ver_h)
 
+string(REGEX MATCH "NANO_VER_MAJOR ([0-9]*)" _ ${nano_ver_h})
+set(NANO_MAJOR_VERSION ${CMAKE_MATCH_1})
+string(REGEX MATCH "NANO_VER_MINOR ([0-9]*)" _ ${nano_ver_h})
+set(NANO_MINOR_VERSION ${CMAKE_MATCH_1})
+string(REGEX MATCH "NANO_VER_PATCH ([0-9]*)" _ ${nano_ver_h})
+set(NANO_PATCH_VERSION ${CMAKE_MATCH_1})
 
-if (NOWARNING)
-  message("NOWARNING")
-  add_definitions(-DNOWARNING)
-endif (NOWARNING)
+set(NANO_ABI_SOVERSION 1)
+set(NANO_ABI_VERSION "${NANO_MAJOR_VERSION}.${NANO_MINOR_VERSION}.${NANO_PATCH_VERSION}")
+set(NANO_PACKAGE_VERSION "${NANO_ABI_VERSION}")
+message(STATUS "Configuring for NanoMQ version ${NANO_ABI_VERSION}")
 
-if (MQ)
-  if (NOT (APPLE OR NANO_PLATFORM_WINDOWS))
-    add_definitions(-DMQ)
-  endif()
-endif (MQ)
+SET(DEBUG 0 CACHE STRING "gdb support")
+SET(ASAN 0 CACHE STRING "asan support")
+SET(TSAN 0 CACHE STRING "tsan support")
 
-if (BUILD_CLIENT)
+if(BUILD_NANO_LIB)
+  add_definitions(-DSUPP_NANO_LIB)
+endif(BUILD_NANO_LIB)
+
+if(BUILD_STATIC_LIB OR BUILD_SHARED_LIBS)
+  add_definitions(-DSUPP_NANO_LIB)
+endif()
+
+if(BUILD_CLIENT)
+  set(BUILD_NANOMQ_CLI ON)
   add_definitions(-DSUPP_CLIENT)
 endif(BUILD_CLIENT)
 
-if (BUILD_NNG_PROXY)
+if(BUILD_BENCH)
+  set(BUILD_NANOMQ_CLI ON)
+  add_definitions(-DSUPP_BENCH)
+endif()
+
+if(NNG_ENABLE_QUIC)
+  set(BUILD_QUIC_CLI ON)
+  add_definitions(-DSUPP_QUIC)
+  # This is for enabling beta feature of MSQUIC such as CUBIC/BBR
+  add_definitions(-DQUIC_API_ENABLE_PREVIEW_FEATURES)
+endif()
+
+if(ENABLE_ACL)
+  message("-- Build NanoMQ with ACL support --")
+  set(ENABLE_ACL ON)
+  add_definitions(-DACL_SUPP)
+endif()
+
+if(BUILD_NNG_PROXY)
+  set(BUILD_NANOMQ_CLI ON)
   add_definitions(-DSUPP_NNG_PROXY)
 endif(BUILD_NNG_PROXY)
 
-if (BUILD_ZMQ_GATEWAY)
+if(BUILD_ZMQ_GATEWAY)
+  set(BUILD_NANOMQ_CLI ON)
   add_definitions(-DSUPP_ZMQ_GATEWAY)
 endif(BUILD_ZMQ_GATEWAY)
 
+if(BUILD_VSOMEIP_GATEWAY)
+  set(BUILD_NANOMQ_CLI ON)
+  add_definitions(-DSUPP_VSOMEIP_GATEWAY)
+endif(BUILD_VSOMEIP_GATEWAY)
+
+if(BUILD_DDS_PROXY)
+  set(BUILD_NANOMQ_CLI ON)
+  add_definitions(-DSUPP_DDS_PROXY)
+  add_definitions(-DDDS_TYPE_NAME=example_struct)
+endif(BUILD_DDS_PROXY)
+
 if (DEBUG)
-  message("DEBUG ")
+  message("-- MODE [Debug] --")
   SET(CMAKE_BUILD_TYPE "Debug")
-  SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")
-  SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
   add_definitions(-DDEBUG)
+  add_definitions(-DLOG_USE_COLOR)
   if (ASAN)
-    message("ASAN")
+    message("* ASAN")
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=address")
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address")
     add_definitions(-DASAN)
   endif (ASAN)
   if (TSAN)
-    message("TSAN")
+    message("* TSAN")
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=thread")
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=thread")
-    add_definitions(-DASAN)
+    add_definitions(-DTSAN)
   endif (TSAN)
+else()
+  message("-- MODE [Release] --")
 endif(DEBUG)
-message("-------------")
+
+if (DEBUG_TRACE)
+  message("-- MODE [enable ptrace] --")
+  SET(CMAKE_BUILD_TYPE "Debug")
+  add_definitions(-DDEBUG_TRACE)
+endif(DEBUG_TRACE)
+
+if (NNG_ENABLE_COVERAGE)
+    # NB: This only works for GCC and Clang 3.0 and newer.  If your stuff
+    # is older than that, you will need to find something newer.  For
+    # correct reporting, we always turn off all optimizations.
+    if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        set(NNG_COVERAGE_C_FLAGS "-g -O0 --coverage")
+        set(CMAKE_SHARED_LINKER_FLAGS --coverage)
+    elseif (CMAKE_C_COMPILER_ID MATCHES "Clang")
+        set(NNG_COVERAGE_C_FLAGS "-g -O0 --coverage")
+        set(CMAKE_SHARED_LINKER_FLAGS --coverage)
+    else ()
+        message(FATAL_ERROR "Unable to enable coverage for your compiler.")
+    endif ()
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${NNG_COVERAGE_C_FLAGS}")
+endif ()
 
 #add_executable(nanomq-nng nanomq/nanomq.c)
 
@@ -203,40 +269,94 @@ if (ENABLE_JWT)
   add_definitions(-DSUPP_JWT)
 endif (ENABLE_JWT)
 
+if(ENABLE_AWS_BRIDGE)
+  message("ENABLE_AWS_BRIDGE=ON")
+  add_definitions(-DSUPP_AWS_BRIDGE)
+  add_definitions(-DMQTT_DO_NOT_USE_CUSTOM_CONFIG)
+endif(ENABLE_AWS_BRIDGE)
+
 if (ENABLE_RULE_ENGINE)
   add_definitions(-DSUPP_RULE_ENGINE)
-  find_path(FOUNDATION_INCLUDE_DIR fdb_c.h /usr/include/foundationdb/ /usr/local/include/foundationdb/)
-  find_library(FOUNDATION_LIBRARY NAMES fdb_c PATHS /usr/lib/ /usr/local/lib/)
-  if (NOT FOUNDATION_INCLUDE_DIR OR NOT FOUNDATION_LIBRARY)
-      message(FATAL_ERROR "Not found foundationdb")
-  else ()
-      message(STATUS "Found foundationdb: ${FOUNDATION_LIBRARY}")
-  endif()
+  ## find_path(FOUNDATION_INCLUDE_DIR fdb_c.h /usr/include/foundationdb/ /usr/local/include/foundationdb/)
+  ## find_library(FOUNDATION_LIBRARY NAMES fdb_c PATHS /usr/lib/ /usr/local/lib/)
+  ## if (NOT FOUNDATION_INCLUDE_DIR OR NOT FOUNDATION_LIBRARY)
+  ##     message(FATAL_ERROR "Not found foundationdb")
+  ## else ()
+  ##     message(STATUS "Found foundationdb: ${FOUNDATION_LIBRARY}")
+  ## endif()
 
-  if (NOT FDB_API_VERSION)
-      set(FDB_API_VERSION 630)
-  endif()
+  ## if (NOT FDB_API_VERSION)
+  ##     set(FDB_API_VERSION 630)
+  ## endif()
 
-  if (FDB_DATABASE)
-      set(FDB_DATABASE "\"${FDB_DATABASE}\"")
-  else()
-      set(FDB_DATABASE NULL)
-  endif()
+  ## if (FDB_DATABASE)
+  ##     set(FDB_DATABASE "\"${FDB_DATABASE}\"")
+  ## else()
+  ##     set(FDB_DATABASE NULL)
+  ## endif()
 
-      configure_file(
-            "${PROJECT_SOURCE_DIR}/fdbversionConfig.h.in"
-            "${PROJECT_SOURCE_DIR}/nanolib/include/fdb_version.h"
-      )
+  ## configure_file(
+  ##       "${PROJECT_SOURCE_DIR}/fdbversionConfig.h.in"
+  ##       "${PROJECT_SOURCE_DIR}/nanomq/include/fdb_version.h"
+  ## )
 
 endif (ENABLE_RULE_ENGINE)
 
 add_subdirectory(nng)
-add_subdirectory(nanolib)
 add_subdirectory(nanomq)
 
 add_dependencies(nanomq nng)
-add_dependencies(nanomq nanolib)
 
 if (ENABLE_JWT) 
   add_dependencies(nanomq l8w8jwt)
 endif (ENABLE_JWT)
+
+if(BUILD_NANOMQ_CLI)
+  add_subdirectory(nanomq_cli)
+endif(BUILD_NANOMQ_CLI)
+
+# Build Windows MSI package with WIX
+if (NANO_PLATFORM_WINDOWS)
+  if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+         set(CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}/install")
+  endif()
+endif()
+message("Install prefix: " ${CMAKE_INSTALL_PREFIX})
+
+# copy and relocate files
+# install(TARGETS nanomq nanolib nng
+# 	RUNTIME DESTINATION bin # executable file
+# 	LIBRARY DESTINATION bin # dynamic library
+# 	ARCHIVE DESTINATION lib)# static library
+# install(FILES nng.h DESTINATION include)
+
+FILE(GLOB CONFIG_FILES "${PROJECT_SOURCE_DIR}/etc/*.conf")
+
+if (NOT WIN32 AND NOT CYGWIN)
+  install(FILES ${CONFIG_FILES}  DESTINATION /etc)
+else ()
+  install(FILES ${CONFIG_FILES}  DESTINATION config)
+  install(FILES libwinpthread-1.dll DESTINATION bin)
+endif ()
+
+
+# set CPACK params
+
+set(CPACK_PACKAGE_NAME "NanoMQ")
+set(CPACK_PACKAGE_VERSION ${NANO_PACKAGE_VERSION})
+set(CPACK_PACKAGE_CONTACT "contact@emqx.io")
+set(CPACK_PACKAGE_VENDOR "nanomq.io")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "NanoMQ Edge Computing Kit")
+set(CPACK_SOURCE_GENERATOR "TBZ2;TGZ;ZIP;WIX")
+set(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;~$;${CPACK_SOURCE_IGNORE_FILES}")
+set(CPACK_SOURCE_PACKAGE_FILE_NAME
+        "${PROJECT_NAME}-v${NANO_PACKAGE_VERSION}-src")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "nanomq")
+set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-v${NANO_PACKAGE_VERSION}")  # set package name
+
+set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE.txt") # set license in installer
+set(CPACK_WIX_PATCH_FILE "${PROJECT_SOURCE_DIR}/wix-patch.xml") # set environment variables
+set(CPACK_VER)
+
+# package files into installer
+include(CPack)
